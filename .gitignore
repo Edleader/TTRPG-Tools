@@ -1,0 +1,11 @@
+# Ignore a specific folder
+nandeck/
+
+# Ignore a specific file
+# scratch-notes.md
+
+# Ignore all files of a certain type
+# *.pdf
+
+# Ignore a folder anywhere in the repo (not just root)
+# **/temp/
