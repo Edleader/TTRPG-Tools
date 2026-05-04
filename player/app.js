@@ -145,6 +145,7 @@ function populateCampaignSelect() {
     opt.textContent = c.name;
     sel.appendChild(opt);
   }
+  sel.disabled = false;
 }
 
 async function onCampaignSelected(campaignId) {
@@ -154,32 +155,43 @@ async function onCampaignSelected(campaignId) {
   state.campaignId   = campaignId;
   state.campaignPath = campaign.path;
 
-  // Load player list for this campaign
-  const selChar = document.getElementById('select-character');
-  selChar.innerHTML = '<option value="">— loading —</option>';
-  document.getElementById('login-step-character').style.display = '';
+  // Disable + show spinner while loading characters
+  const selChar   = document.getElementById('select-character');
+  const spinner   = document.getElementById('char-loading-spinner');
+  selChar.disabled  = true;
+  selChar.innerHTML = '<option value="">Loading characters…</option>';
+  spinner.style.display = '';
 
   try {
-    const entries = await listDirectory(`${campaign.path}/players`);
-    // Each player has a subdirectory; their sheet is [slug]/[slug].md
+    const entries    = await listDirectory(`${campaign.path}/players`);
     const playerDirs = entries.filter(e => e.type === 'dir');
 
+    // Load all character names in parallel
+    const options = await Promise.all(
+      playerDirs.map(async dir => {
+        try {
+          const { content } = await readFile(`${dir.path}/${dir.name}.md`);
+          const fm = parseFrontmatter(content);
+          return (fm.type === 'player' && fm.name)
+            ? { value: dir.name, label: fm.name }
+            : null;
+        } catch (_) { return null; }
+      })
+    );
+
     selChar.innerHTML = '<option value="">— choose —</option>';
-    for (const dir of playerDirs) {
-      try {
-        const { content } = await readFile(`${dir.path}/${dir.name}.md`);
-        const fm = parseFrontmatter(content);
-        if (fm.type === 'player' && fm.name) {
-          const opt = document.createElement('option');
-          opt.value       = dir.name;
-          opt.textContent = fm.name;
-          selChar.appendChild(opt);
-        }
-      } catch (_) { /* skip dirs without a matching .md */ }
+    for (const opt of options.filter(Boolean)) {
+      const el = document.createElement('option');
+      el.value       = opt.value;
+      el.textContent = opt.label;
+      selChar.appendChild(el);
     }
+    selChar.disabled = false;
   } catch (e) {
     selChar.innerHTML = '<option value="">— error loading —</option>';
     console.error(e);
+  } finally {
+    spinner.style.display = 'none';
   }
 }
 
@@ -639,10 +651,11 @@ function logout() {
     sessionActive: false,
   });
   // Reset login UI
-  document.getElementById('login-step-character').style.display = 'none';
-  document.getElementById('login-step-pin').style.display       = 'none';
-  document.getElementById('select-campaign').value              = '';
-  document.getElementById('select-character').innerHTML         = '<option value="">— choose —</option>';
+  document.getElementById('login-step-pin').style.display              = 'none';
+  document.getElementById('select-campaign').value                      = '';
+  document.getElementById('select-character').innerHTML                 = '<option value="">— choose campaign first —</option>';
+  document.getElementById('select-character').disabled                  = true;
+  document.getElementById('char-loading-spinner').style.display         = 'none';
   resetPinEntry();
   showScreen('login-screen');
 }
@@ -682,8 +695,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // Campaign select
   document.getElementById('select-campaign').addEventListener('change', (e) => {
     const id = e.target.value;
-    document.getElementById('login-step-character').style.display = id ? '' : 'none';
-    document.getElementById('login-step-pin').style.display       = 'none';
+    document.getElementById('login-step-pin').style.display = 'none';
+    // Reset character dropdown while we load the new campaign's characters
+    const selChar = document.getElementById('select-character');
+    selChar.disabled  = true;
+    selChar.innerHTML = '<option value="">— choose campaign first —</option>';
     if (id) onCampaignSelected(id);
   });
 

@@ -37,16 +37,19 @@
       <!-- Step 1: campaign -->
       <div id="login-step-campaign" class="login-step">
         <label class="login-label">Select campaign</label>
-        <select id="select-campaign" class="login-select">
-          <option value="">— choose —</option>
+        <select id="select-campaign" class="login-select" disabled>
+          <option value="">Loading…</option>
         </select>
       </div>
 
-      <!-- Step 2: character (shown after campaign chosen) -->
-      <div id="login-step-character" class="login-step" style="display:none">
-        <label class="login-label">Select character</label>
-        <select id="select-character" class="login-select">
-          <option value="">— choose —</option>
+      <!-- Step 2: character (always visible, disabled until campaign loads characters) -->
+      <div id="login-step-character" class="login-step">
+        <label class="login-label">
+          Select character
+          <span id="char-loading-spinner" class="login-spinner" style="display:none"></span>
+        </label>
+        <select id="select-character" class="login-select" disabled>
+          <option value="">— choose campaign first —</option>
         </select>
       </div>
 
@@ -96,19 +99,19 @@
       </div>
       <div class="header-stats-block">
         <div class="stat-pill">
-          <span class="stat-pill-label">MIG</span>
+          <span class="stat-pill-label">Might</span>
           <span class="stat-pill-value" id="stat-might"></span>
         </div>
         <div class="stat-pill">
-          <span class="stat-pill-label">FIN</span>
+          <span class="stat-pill-label">Finesse</span>
           <span class="stat-pill-value" id="stat-finesse"></span>
         </div>
         <div class="stat-pill">
-          <span class="stat-pill-label">MND</span>
+          <span class="stat-pill-label">Mind</span>
           <span class="stat-pill-value" id="stat-mind"></span>
         </div>
         <div class="stat-pill">
-          <span class="stat-pill-label">ARM</span>
+          <span class="stat-pill-label">Armour</span>
           <span class="stat-pill-value" id="stat-armour">0</span>
         </div>
       </div>
