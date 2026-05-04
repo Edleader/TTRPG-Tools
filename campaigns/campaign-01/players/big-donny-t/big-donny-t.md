@@ -16,7 +16,7 @@ perk_5:
 perk_10: 
 perk_17: 
 hp_current: 28
-spell_slots_spent: 3
+spell_slots_spent: 1
 ---
 
 # Big Donny T (Matt)
