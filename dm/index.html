@@ -248,6 +248,17 @@
 
   </div><!-- /#app -->
 
+  <!-- Close warning overlay (shown when trying to close with session active) -->
+  <div id="close-warning" style="display:none">
+    <div class="close-warning-card">
+      <p class="close-warning-msg">The session is still active.<br>Players will see a "session not active" banner if you close now.</p>
+      <div class="close-warning-actions">
+        <button class="btn btn-danger" id="btn-end-and-close">End Session &amp; Close</button>
+        <button class="btn btn-secondary" id="btn-stay-open">Stay Open</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ES module — must be type="module" to use import/export -->
   <script type="module" src="app.js"></script>
 </body>

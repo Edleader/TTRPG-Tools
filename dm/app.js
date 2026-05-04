@@ -62,7 +62,8 @@ const state = {
   hpEntries:        [],      // [{ id, name, current, max }] — enemy HP tracker
   nextHpId:         1,
   playerFiles:      [],      // Subset of files where frontmatter.type === 'player'
-  playerHpLive:     {},      // { [slug]: currentHp } — live from Firebase
+  playerHpLive:        {},   // { [slug]: currentHp } — live from Firebase
+  playerRestRequests:  {},   // { [slug]: { type, status, requestedAt } } — pending rests
   sessionActive:    false,   // Whether the DM has started the session
   backgroundDone:   false,   // True once background content load is complete
   _fbUnsub:         null,    // Firebase listener unsubscribe
@@ -1126,6 +1127,8 @@ function renderPlayerPanel(files) {
         ${makePerkRow('Lv10', fm.perk_10 || '')}
         ${makePerkRow('Lv17', fm.perk_17 || '')}
       </div>
+      <button class="btn btn-sm rest-approve-btn" id="rest-approve-${escapeHtml(slug)}"
+        data-slug="${escapeHtml(slug)}" style="display:none">Approve Rest</button>
     `;
     wrap.appendChild(card);
   }
@@ -1206,13 +1209,44 @@ function positionTooltip(tip, e) {
 }
 
 /**
- * Patches live HP values into already-rendered player cards without a full re-render.
+ * Patches live HP and rest-request state into already-rendered player cards.
  * Called whenever Firebase pushes an update.
  */
 function updatePlayerHpDisplay() {
   for (const [slug, hp] of Object.entries(state.playerHpLive)) {
     const el = document.getElementById(`php-${slug}`);
     if (el) el.textContent = String(hp);
+  }
+
+  // Show/hide approve buttons for pending rest requests
+  for (const pf of state.playerFiles) {
+    const slug    = pf.path.split('/players/')[1]?.split('/')[0] || '';
+    const restReq = state.playerRestRequests[slug];
+    const btn     = document.getElementById(`rest-approve-${slug}`);
+    if (!btn) continue;
+    if (restReq && restReq.status === 'pending') {
+      const label = restReq.type === 'short' ? 'Short Rest' : 'Long Rest';
+      btn.textContent    = `Approve ${label}`;
+      btn.style.display  = '';
+    } else {
+      btn.style.display  = 'none';
+    }
+  }
+}
+
+/**
+ * Approves a player's pending rest request by writing 'approved' to Firebase.
+ *
+ * @param {string} slug - Character slug, e.g. "fat-tony"
+ */
+async function approveRestRequest(slug) {
+  const restReq = state.playerRestRequests[slug];
+  if (!restReq) return;
+  const path = `${firebaseCampaignPath(state.activeCampaign.id)}/session/${slug}/rest_request`;
+  try {
+    await set(ref(_db, path), { ...restReq, status: 'approved' });
+  } catch (e) {
+    alert('Could not approve rest: ' + e.message);
   }
 }
 
@@ -1235,11 +1269,15 @@ function subscribePlayerHp(campaignId) {
     const btn = document.getElementById('btn-session-toggle');
     if (btn) btn.textContent = state.sessionActive ? 'End Session' : 'Start Session';
 
-    // data.session is { [slug]: { hp_current: N, ... } }
-    state.playerHpLive = {};
+    // data.session is { [slug]: { hp_current: N, rest_request: {...}, ... } }
+    state.playerHpLive       = {};
+    state.playerRestRequests = {};
     for (const [slug, playerData] of Object.entries(data.session || {})) {
       if (typeof playerData?.hp_current === 'number') {
         state.playerHpLive[slug] = playerData.hp_current;
+      }
+      if (playerData?.rest_request) {
+        state.playerRestRequests[slug] = playerData.rest_request;
       }
     }
     updatePlayerHpDisplay();
@@ -1682,6 +1720,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (confirm('Clear all HP trackers?')) clearAllHp();
   });
 
+  // Rest approval buttons (event delegation on the player panel body)
+  document.getElementById('player-panel-body').addEventListener('click', (e) => {
+    const btn = e.target.closest('.rest-approve-btn');
+    if (btn) approveRestRequest(btn.dataset.slug);
+  });
+
   // Session toggle button
   document.getElementById('btn-session-toggle').addEventListener('click', async () => {
     if (!state.activeCampaign) return;
@@ -1706,6 +1750,33 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('app').style.display = 'none';
       showCampaignSelect(state.campaigns);
     }
+  });
+
+  // Close-tab warning: intercept unload when session is active
+  window.addEventListener('beforeunload', (e) => {
+    if (state.sessionActive) {
+      // Show our custom overlay instead — but we also set returnValue so the
+      // browser's own "are you sure?" fires if the overlay can't show in time.
+      document.getElementById('close-warning').style.display = '';
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  });
+
+  document.getElementById('btn-end-and-close').addEventListener('click', async () => {
+    try {
+      await set(ref(_db, `${firebaseCampaignPath(state.activeCampaign.id)}/session_active`), false);
+    } catch (_) { /* best effort */ }
+    window.removeEventListener('beforeunload', () => {});
+    window.close();
+    // If window.close() is blocked (most browsers block it unless opened by script),
+    // fall back to a message.
+    document.getElementById('close-warning').innerHTML =
+      '<div class="close-warning-card"><p class="close-warning-msg">Session ended. You can now safely close this tab.</p></div>';
+  });
+
+  document.getElementById('btn-stay-open').addEventListener('click', () => {
+    document.getElementById('close-warning').style.display = 'none';
   });
 
   init();

@@ -91,21 +91,23 @@
     <!-- ── TOP HEADER ─────────────────────────────── -->
     <header class="sheet-header">
       <div class="header-name-block">
-        <div class="char-name" id="char-name"></div>
-        <div class="char-sub" id="char-sub"></div>
-      </div>
-      <div class="header-stats-block">
-        <div class="stat-pill">
-          <span class="stat-pill-label">MIG</span>
-          <span class="stat-pill-value" id="stat-might"></span>
+        <div>
+          <div class="char-name" id="char-name"></div>
+          <div class="char-sub" id="char-sub"></div>
         </div>
-        <div class="stat-pill">
-          <span class="stat-pill-label">FIN</span>
-          <span class="stat-pill-value" id="stat-finesse"></span>
-        </div>
-        <div class="stat-pill">
-          <span class="stat-pill-label">MND</span>
-          <span class="stat-pill-value" id="stat-mind"></span>
+        <div class="header-name-stats">
+          <div class="stat-pill">
+            <span class="stat-pill-label">MIG</span>
+            <span class="stat-pill-value" id="stat-might"></span>
+          </div>
+          <div class="stat-pill">
+            <span class="stat-pill-label">FIN</span>
+            <span class="stat-pill-value" id="stat-finesse"></span>
+          </div>
+          <div class="stat-pill">
+            <span class="stat-pill-label">MND</span>
+            <span class="stat-pill-value" id="stat-mind"></span>
+          </div>
         </div>
       </div>
     </header>
@@ -127,8 +129,8 @@
         </div>
         <!-- Custom amount input for big adjustments -->
         <div class="hp-custom-row">
-          <input type="number" id="hp-custom-amount" class="hp-custom-input" min="1" max="999" placeholder="amt" aria-label="Custom HP amount">
-          <button class="hp-custom-btn" id="btn-hp-damage" aria-label="Apply damage">Dmg</button>
+          <input type="number" id="hp-custom-amount" class="hp-custom-input" min="1" max="999" placeholder="Amount" aria-label="Custom HP amount">
+          <button class="hp-custom-btn" id="btn-hp-damage" aria-label="Apply damage">Damage</button>
           <button class="hp-custom-btn hp-custom-heal" id="btn-hp-heal" aria-label="Apply healing">Heal</button>
         </div>
       </div>
@@ -232,6 +234,15 @@
     </div>
 
   </div><!-- /#app -->
+
+  <!-- ── REST WAITING OVERLAY ─────────────────────────── -->
+  <div id="rest-overlay" style="display:none" role="dialog" aria-modal="true">
+    <div class="rest-overlay-card">
+      <div class="rest-overlay-spinner"></div>
+      <p class="rest-overlay-label" id="rest-overlay-label">Resting…</p>
+      <button class="btn rest-overlay-cancel" id="rest-overlay-cancel">Cancel</button>
+    </div>
+  </div>
 
   <!-- ── CARD DETAIL MODAL ──────────────────────────── -->
   <div id="card-modal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true">

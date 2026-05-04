@@ -1168,6 +1168,22 @@ html, body {
   cursor: help;
 }
 
+.rest-approve-btn {
+  margin-top: 5px;
+  width: 100%;
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--text);
+  font-size: 0.7rem;
+  padding: 3px 6px;
+  animation: rest-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes rest-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.6; }
+}
+
 .perk-row.has-perk:hover {
   background: rgba(201,168,76,0.08);
   color: var(--accent);
@@ -1213,6 +1229,40 @@ html, body {
   text-transform: uppercase;
   color: var(--text-faint);
   margin-right: auto;
+}
+
+/* Close-tab warning overlay */
+#close-warning {
+  position:        fixed;
+  inset:           0;
+  background:      rgba(0,0,0,0.75);
+  display:         flex;
+  align-items:     center;
+  justify-content: center;
+  z-index:         9999;
+}
+
+.close-warning-card {
+  background:    var(--surface);
+  border:        1px solid var(--border);
+  border-radius: 10px;
+  padding:       2rem 1.75rem;
+  max-width:     360px;
+  text-align:    center;
+}
+
+.close-warning-msg {
+  font-size:     0.95rem;
+  line-height:   1.6;
+  margin-bottom: 1.25rem;
+  color:         var(--text);
+}
+
+.close-warning-actions {
+  display:         flex;
+  gap:             0.75rem;
+  justify-content: center;
+  flex-wrap:       wrap;
 }
 
 .hp-entries {

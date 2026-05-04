@@ -280,9 +280,7 @@ function renderHp() {
 function adjustHp(delta) {
   state.currentHp = Math.max(0, Math.min(state.maxHp, state.currentHp + delta));
   renderHp();
-  // Push to Firebase immediately so the DM sees it live
-  set(ref(db, `${firebasePlayerPath(state.campaignId, state.characterSlug)}/hp_current`),
-    state.currentHp).catch(e => console.warn('Firebase HP write failed:', e));
+  pushHpToFirebase();
   scheduleHpSave();
 }
 
@@ -512,28 +510,43 @@ function renderMarkdownSimple(text) {
 // REST BUTTONS
 // =====================================================
 
+function showRestOverlay(type) {
+  const label = type === 'short' ? 'Short Rest' : 'Long Rest';
+  document.getElementById('rest-overlay-label').textContent = `${label} in progress…`;
+  document.getElementById('rest-overlay').style.display = '';
+}
+
+function hideRestOverlay() {
+  document.getElementById('rest-overlay').style.display = 'none';
+}
+
+async function cancelRestRequest() {
+  hideRestOverlay();
+  const restPath = `${firebasePlayerPath(state.campaignId, state.characterSlug)}/rest_request`;
+  await set(ref(db, restPath), null).catch(() => {});
+}
+
 /**
- * Requests a rest via Firebase. The GM must approve.
- * On approval, applies rest effects locally and saves to GitHub.
+ * Requests a rest. Shows a confirmation then a waiting overlay.
+ * The GM approves via the DM tool; approval is detected via Firebase listener.
  *
  * @param {'short'|'long'} type
  */
 async function requestRest(type) {
   const label = type === 'short' ? 'Short Rest' : 'Long Rest';
-  if (!confirm(`Request a ${label}?\n\nThis will notify the GM for approval.`)) return;
+  if (!confirm(`Take a ${label}?`)) return;
 
   if (!state.sessionActive) {
-    alert('No active session. Ask your GM to start the session first.');
+    alert('No active session right now.');
     return;
   }
 
-  // Write a rest request to Firebase for the GM to see
   const restPath = `${firebasePlayerPath(state.campaignId, state.characterSlug)}/rest_request`;
   try {
     await set(ref(db, restPath), { type, requestedAt: Date.now(), status: 'pending' });
-    alert(`${label} request sent to GM. Wait for approval.`);
+    showRestOverlay(type);
   } catch (e) {
-    alert('Could not send rest request: ' + e.message);
+    alert('Something went wrong. Please try again.');
   }
 }
 
@@ -543,27 +556,27 @@ async function requestRest(type) {
  * - Restore ceil(spent spell slots / 2)
  */
 function applyShortRest() {
-  const missingHp     = state.maxHp - state.currentHp;
-  const hpRestore     = Math.ceil(missingHp / 2);
-  state.currentHp     = Math.min(state.maxHp, state.currentHp + hpRestore);
-  const slotRestore   = Math.ceil(state.spentSlots / 2);
-  state.spentSlots    = Math.max(0, state.spentSlots - slotRestore);
+  const missingHp   = state.maxHp - state.currentHp;
+  state.currentHp   = Math.min(state.maxHp, state.currentHp + Math.ceil(missingHp / 2));
+  state.spentSlots  = Math.max(0, state.spentSlots - Math.ceil(state.spentSlots / 2));
   renderHp();
   renderSpellSlots();
+  pushHpToFirebase();
   saveHpToGitHub();
 }
 
-/**
- * Applies long rest effects locally.
- * - Restore all HP
- * - Restore all spell slots
- */
 function applyLongRest() {
   state.currentHp  = state.maxHp;
   state.spentSlots = 0;
   renderHp();
   renderSpellSlots();
+  pushHpToFirebase();
   saveHpToGitHub();
+}
+
+function pushHpToFirebase() {
+  set(ref(db, `${firebasePlayerPath(state.campaignId, state.characterSlug)}/hp_current`),
+    state.currentHp).catch(e => console.warn('Firebase HP write failed:', e));
 }
 
 // =====================================================
@@ -587,18 +600,13 @@ function subscribeFirebase() {
     const playerData = (data.session || {})[state.characterSlug] || {};
     const restReq    = playerData.rest_request;
     if (restReq && restReq.status === 'approved') {
-      // Clear the request from Firebase then apply
+      // Clear the request from Firebase then apply effects silently
       set(ref(db,
         `${firebasePlayerPath(state.campaignId, state.characterSlug)}/rest_request`
       ), null);
-
-      if (restReq.type === 'short') {
-        alert('Short Rest approved! Applying effects…');
-        applyShortRest();
-      } else if (restReq.type === 'long') {
-        alert('Long Rest approved! Applying effects…');
-        applyLongRest();
-      }
+      hideRestOverlay();
+      if (restReq.type === 'short') applyShortRest();
+      else if (restReq.type === 'long') applyLongRest();
     }
   });
 
@@ -710,6 +718,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Rest buttons
   document.getElementById('btn-short-rest').addEventListener('click', () => requestRest('short'));
   document.getElementById('btn-long-rest').addEventListener('click',  () => requestRest('long'));
+  document.getElementById('rest-overlay-cancel').addEventListener('click', cancelRestRequest);
 
   // Quick reference
   document.getElementById('qref-toggle').addEventListener('click', toggleQref);
