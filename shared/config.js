@@ -16,7 +16,7 @@
  * HOW TO FIND IT:
  *   Cloudflare dashboard → Workers & Pages → your worker → the URL shown at the top
  */
-export const WORKER_URL = 'https://ttrpg-github-proxy.YOUR-SUBDOMAIN.workers.dev';
+export const WORKER_URL = 'https://ttrpg-github-proxy.ed-hay89.workers.dev';
 
 // ─── GitHub repo details ───────────────────────────────────────────────────────
 
