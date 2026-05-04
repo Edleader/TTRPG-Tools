@@ -1121,12 +1121,88 @@ function renderPlayerPanel(files) {
         <span class="player-hp-sep">/</span>
         <span class="player-hp-max">${escapeHtml(String(maxHp))}</span>
       </div>
+      <div class="player-card-perks">
+        ${makePerkRow('Lv5',  fm.perk_5  || '')}
+        ${makePerkRow('Lv10', fm.perk_10 || '')}
+        ${makePerkRow('Lv17', fm.perk_17 || '')}
+      </div>
     `;
     wrap.appendChild(card);
   }
 
   body.innerHTML = '';
   body.appendChild(wrap);
+
+  body.querySelectorAll('.perk-row.has-perk').forEach(row => {
+    row.addEventListener('mouseenter', showPerkTooltip);
+    row.addEventListener('mousemove',  movePerkTooltip);
+    row.addEventListener('mouseleave', hidePerkTooltip);
+  });
+}
+
+/**
+ * Returns HTML for a single perk row in the player panel card.
+ * Perk text format: "Perk Name" or "Perk Name|Description"
+ *
+ * @param {string} levelLabel - e.g. "Lv5"
+ * @param {string} perkText
+ * @returns {string} HTML string
+ */
+function makePerkRow(levelLabel, perkText) {
+  if (!perkText || !perkText.trim()) {
+    return `<div class="perk-row">${escapeHtml(levelLabel)}: —</div>`;
+  }
+  const pipeIdx  = perkText.indexOf('|');
+  const perkName = pipeIdx > -1 ? perkText.slice(0, pipeIdx).trim() : perkText.trim();
+  const perkDesc = pipeIdx > -1 ? perkText.slice(pipeIdx + 1).trim() : '';
+  const encoded  = encodeURIComponent(JSON.stringify({ name: perkName, desc: perkDesc, level: levelLabel }));
+  return `<div class="perk-row has-perk" data-perk="${escapeHtml(encoded)}">${escapeHtml(levelLabel)}: ${escapeHtml(perkName)}</div>`;
+}
+
+let _tooltipEl = null;
+
+function getPerkTooltip() {
+  if (!_tooltipEl) {
+    _tooltipEl = document.createElement('div');
+    _tooltipEl.className   = 'perk-tooltip';
+    _tooltipEl.style.display = 'none';
+    document.body.appendChild(_tooltipEl);
+  }
+  return _tooltipEl;
+}
+
+function showPerkTooltip(e) {
+  const row = e.currentTarget;
+  let data;
+  try { data = JSON.parse(decodeURIComponent(row.dataset.perk)); } catch { return; }
+  const tip = getPerkTooltip();
+  tip.innerHTML = `<strong>${escapeHtml(data.name)}</strong>${data.desc
+    ? escapeHtml(data.desc)
+    : '<em style="color:var(--text-faint)">No description set.</em>'}`;
+  tip.style.display = 'block';
+  positionTooltip(tip, e);
+}
+
+function movePerkTooltip(e) {
+  const tip = getPerkTooltip();
+  if (tip.style.display === 'none') return;
+  positionTooltip(tip, e);
+}
+
+function hidePerkTooltip() {
+  getPerkTooltip().style.display = 'none';
+}
+
+function positionTooltip(tip, e) {
+  const margin = 12;
+  const tw = tip.offsetWidth  || 260;
+  const th = tip.offsetHeight || 80;
+  let x = e.clientX + margin;
+  let y = e.clientY + margin;
+  if (x + tw > window.innerWidth)  x = e.clientX - tw - margin;
+  if (y + th > window.innerHeight) y = e.clientY - th - margin;
+  tip.style.left = `${x}px`;
+  tip.style.top  = `${y}px`;
 }
 
 /**
