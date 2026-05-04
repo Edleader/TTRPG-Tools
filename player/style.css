@@ -304,15 +304,6 @@ html, body {
   font-weight: 400;
 }
 
-.btn-arrange-inline {
-  margin-left: auto;
-  font-size:   0.7rem !important;
-  padding:     2px 10px !important;
-  line-height: 1.4 !important;
-  text-transform: none !important;
-  letter-spacing: 0 !important;
-}
-
 /* ── Vitals row (HP + Spell Slots) ─────────────────────────── */
 .vitals-row {
   display:    flex;
@@ -538,6 +529,25 @@ html, body {
   flex: 1;
   padding: 0.65rem;
   font-size: 0.9rem;
+}
+
+/* Arrange button — sits left of rest buttons, doesn't stretch as wide */
+.btn-arrange-rest {
+  flex:          0 0 auto;
+  padding:       0.65rem 1rem;
+  font-size:     0.9rem;
+  background:    var(--surface-2);
+  border-color:  var(--border);
+  color:         var(--text-sub);
+}
+.btn-arrange-rest:not(:disabled):hover {
+  background:   var(--surface-2);
+  border-color: var(--text-sub);
+  color:        var(--text);
+}
+.btn-arrange-rest:disabled {
+  opacity: 0.4;
+  cursor:  not-allowed;
 }
 
 .btn-long-rest {
@@ -1157,9 +1167,3 @@ html, body {
   flex-shrink:     0;
 }
 
-/* Arrange button inline in the section header */
-.btn-arrange-inline {
-  margin-left: auto;
-  font-size:   0.7rem !important;
-  padding:     2px 10px !important;
-}

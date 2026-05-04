@@ -641,8 +641,7 @@ function subscribeFirebase() {
     state.sessionActive = data.session_active === true;
     document.getElementById('session-banner').style.display =
       state.sessionActive ? 'none' : '';
-    document.getElementById('btn-arrange-cards').style.display =
-      state.sessionActive ? '' : 'none';
+    document.getElementById('btn-arrange-cards').disabled = !state.sessionActive;
 
     // Live HP sync — update display if another tab/device changed HP
     const playerData   = (data.session || {})[state.characterSlug] || {};
@@ -749,13 +748,16 @@ async function tryDeliverMyCards(myCards) {
 
   if (!needsSpace) {
     // Enough room — deliver straight away
-    for (const card of myCards) {
-      // Hand cards go to hand; active cards go to hand first, then active
-      const slot = (card.slots || 'hand') === 'hand' ? 'hand'
-        : (curHand + incomingActive.indexOf(card)) < maxHand ? 'hand' : 'active';
-      await deliverCardToPlayer(card, state.characterSlug, slot);
+    try {
+      for (const card of myCards) {
+        const slot = (card.slots || 'hand') === 'hand' ? 'hand'
+          : (curHand + incomingActive.indexOf(card)) < maxHand ? 'hand' : 'active';
+        await deliverCardToPlayer(card, state.characterSlug, slot);
+      }
+      await loadAndRenderCards();
+    } catch (e) {
+      console.error('Auto-delivery failed:', e);
     }
-    await loadAndRenderCards();
   } else {
     // Not enough room — open Arrange UI with incoming cards shown
     state.lootNotifyCards = myCards;
@@ -826,9 +828,19 @@ async function deliverCardToPlayer(card, slug, playerSlot) {
   try {
     await copyFile(card.cardPath, destPath, `Give ${card.name} to ${slug}`, { player_slot: playerSlot });
     const cardRef = ref(db, `${firebaseLootPath(state.campaignId)}/cards/${card.key}`);
-    await set(cardRef, { ...card, claimedBy: slug, resolvedAt: Date.now() });
+    // Write a clean object — avoid spreading undefined/null fields that Firebase rejects
+    await set(cardRef, {
+      cardPath:   card.cardPath,
+      name:       card.name       || '',
+      card_type:  card.card_type  || '',
+      slots:      card.slots      || 'hand',
+      assignTo:   card.assignTo   || slug,
+      claimedBy:  slug,
+      resolvedAt: Date.now(),
+    });
   } catch (e) {
     console.error(`Failed to deliver ${card.name}:`, e);
+    throw e; // re-throw so callers can surface errors
   }
 }
 
@@ -839,7 +851,16 @@ async function sendNotifyCardsToGroup() {
   closeArrangeOverlay();
   for (const card of state.lootNotifyCards) {
     const cardRef = ref(db, `${firebaseLootPath(state.campaignId)}/cards/${card.key}`);
-    await set(cardRef, { ...card, forceGroup: true, assignTo: 'group' }).catch(() => {});
+    await set(cardRef, {
+      cardPath:    card.cardPath,
+      name:        card.name      || '',
+      card_type:   card.card_type || '',
+      slots:       card.slots     || 'hand',
+      assignTo:    'group',
+      forceGroup:  true,
+      claimedBy:   null,
+      resolvedAt:  null,
+    }).catch(() => {});
   }
   state.lootNotifyCards = [];
 }
