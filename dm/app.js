@@ -1458,16 +1458,17 @@ function hideAbilityTooltip() {
 // =====================================================
 
 const _drag = {
-  active:    false,
-  sourceId:  null,   // id of the entry being dragged
-  ghost:     null,   // cloned floating element
-  offsetX:   0,
-  offsetY:   0,
-  overIndex: -1,     // current hover target index in state.hpEntries
+  active:     false,
+  sourceId:   null,  // numeric id of the card being dragged
+  sourceEl:   null,  // the actual DOM card element
+  ghost:      null,  // floating clone that follows the pointer
+  offsetX:    0,
+  offsetY:    0,
+  lastOverId: null,  // id of the card we last swapped with (prevents repeat swaps)
 };
 
 function hpDragStart(e) {
-  // Only drag on left-button pointer; ignore clicks on buttons/inputs
+  // Left-button pointer only; ignore clicks on interactive controls
   if (e.button !== undefined && e.button !== 0) return;
   if (e.target.closest('button, input')) return;
 
@@ -1478,25 +1479,26 @@ function hpDragStart(e) {
   e.preventDefault();
 
   const rect = card.getBoundingClientRect();
-  _drag.active    = true;
-  _drag.sourceId  = id;
-  _drag.offsetX   = e.clientX - rect.left;
-  _drag.offsetY   = e.clientY - rect.top;
-  _drag.overIndex = state.hpEntries.findIndex(en => en.id === id);
 
-  // Create ghost — a visual clone that follows the pointer
+  _drag.active     = true;
+  _drag.sourceId   = id;
+  _drag.sourceEl   = card;
+  _drag.offsetX    = e.clientX - rect.left;
+  _drag.offsetY    = e.clientY - rect.top;
+  _drag.lastOverId = id;
+
+  // Build a floating ghost clone that follows the pointer — never touches the real DOM grid
   const ghost = card.cloneNode(true);
-  ghost.className = 'hp-entry hp-drag-ghost';
+  ghost.className    = 'hp-entry hp-drag-ghost';
   ghost.style.width  = `${rect.width}px`;
   ghost.style.left   = `${rect.left}px`;
   ghost.style.top    = `${rect.top}px`;
   document.body.appendChild(ghost);
   _drag.ghost = ghost;
 
-  // Mark source as faded — renderHpBar will re-apply this after reorders
+  // Fade the source card in-place; it stays in the grid as a placeholder
   card.classList.add('drag-source');
 
-  // Use document-level capture so we keep receiving events even as cards re-render
   document.addEventListener('pointermove', hpDragMove, { capture: true });
   document.addEventListener('pointerup',   hpDragEnd,  { capture: true });
 }
@@ -1504,46 +1506,45 @@ function hpDragStart(e) {
 function hpDragMove(e) {
   if (!_drag.active) return;
 
-  // Move the ghost
+  // Move ghost to follow the pointer — this is the only thing that runs on every move event
   _drag.ghost.style.left = `${e.clientX - _drag.offsetX}px`;
   _drag.ghost.style.top  = `${e.clientY - _drag.offsetY}px`;
 
-  // Find which card the ghost centre is hovering over
+  // Find the closest card (excluding the faded source placeholder)
   const container = document.getElementById('hp-entries');
   const cards     = Array.from(container.querySelectorAll('.hp-entry:not(.drag-source)'));
-  const ghostCX   = e.clientX - _drag.offsetX + _drag.ghost.offsetWidth  / 2;
-  const ghostCY   = e.clientY - _drag.offsetY + _drag.ghost.offsetHeight / 2;
 
-  let targetIndex = -1;
-  let minDist     = Infinity;
+  // Use the pointer position directly (more reliable than ghost centre in a 4-col grid)
+  let closestEl = null;
+  let minDist   = Infinity;
 
-  cards.forEach((card, visIdx) => {
-    const r    = card.getBoundingClientRect();
+  for (const c of cards) {
+    const r    = c.getBoundingClientRect();
     const cx   = r.left + r.width  / 2;
     const cy   = r.top  + r.height / 2;
-    const dist = Math.hypot(ghostCX - cx, ghostCY - cy);
-    if (dist < minDist) {
-      minDist     = dist;
-      // Map visual index back to state index (skipping the source)
-      const stateId = parseInt(card.dataset.id);
-      targetIndex   = state.hpEntries.findIndex(en => en.id === stateId);
-    }
-  });
+    const dist = Math.hypot(e.clientX - cx, e.clientY - cy);
+    if (dist < minDist) { minDist = dist; closestEl = c; }
+  }
 
-  if (targetIndex !== -1 && targetIndex !== _drag.overIndex) {
-    _drag.overIndex = targetIndex;
-    // Reorder state array in-place so renderHpBar shows the live preview
-    const srcIdx  = state.hpEntries.findIndex(en => en.id === _drag.sourceId);
-    const [entry] = state.hpEntries.splice(srcIdx, 1);
-    state.hpEntries.splice(targetIndex, 0, entry);
-    renderHpBar();
+  if (!closestEl) return;
 
-    // Re-attach listeners — renderHpBar rebuilds the DOM
-    const src = container.querySelector(`[data-id="${_drag.sourceId}"]`);
-    if (src) {
-      src.classList.add('drag-source');
-      src.removeEventListener('pointerdown', hpDragStart); // prevent double-attach
-    }
+  const overId = parseInt(closestEl.dataset.id);
+
+  // Only act when we've moved to a different target card
+  if (overId === _drag.lastOverId) return;
+  _drag.lastOverId = overId;
+
+  // Move the real source DOM node to the correct position — no re-render, no flicker
+  const sourceEl = _drag.sourceEl;
+  const overRect = closestEl.getBoundingClientRect();
+  const overCY   = overRect.top + overRect.height / 2;
+
+  if (e.clientY < overCY) {
+    // Pointer is in the top half of the target — insert source before it
+    container.insertBefore(sourceEl, closestEl);
+  } else {
+    // Pointer is in the bottom half — insert source after it
+    container.insertBefore(sourceEl, closestEl.nextSibling);
   }
 }
 
@@ -1553,9 +1554,14 @@ function hpDragEnd() {
 
   if (_drag.ghost) { _drag.ghost.remove(); _drag.ghost = null; }
 
-  // Remove drag-source class
+  // Remove the faded placeholder style from the source card
+  if (_drag.sourceEl) { _drag.sourceEl.classList.remove('drag-source'); }
+
+  // Sync state.hpEntries order to match the new DOM order so the rest of the app stays correct
   const container = document.getElementById('hp-entries');
-  container.querySelectorAll('.drag-source').forEach(el => el.classList.remove('drag-source'));
+  const newOrder  = Array.from(container.querySelectorAll('.hp-entry[data-id]'))
+                         .map(el => parseInt(el.dataset.id));
+  state.hpEntries.sort((a, b) => newOrder.indexOf(a.id) - newOrder.indexOf(b.id));
 
   document.removeEventListener('pointermove', hpDragMove, { capture: true });
   document.removeEventListener('pointerup',   hpDragEnd,  { capture: true });
