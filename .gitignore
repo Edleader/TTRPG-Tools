@@ -5,6 +5,8 @@ nandeck/
 almanac-player-app-planning.md
 claude-code-prompt.md
 firebaseconfig.txt
+cloudflare-worker.js
+github pat.txt
 
 # Ignore a folder anywhere in the repo (not just root)
 # **/temp/

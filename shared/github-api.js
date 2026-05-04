@@ -1,43 +1,34 @@
 /**
- * github-api.js — GitHub Contents API wrapper.
+ * github-api.js — GitHub Contents API wrapper (via Cloudflare Worker proxy).
  *
- * All reads and writes to the repository go through these functions.
- * Both apps import what they need from here.
- *
- * The GitHub Contents API works like this:
- *   - To read a file:  GET  /repos/:owner/:repo/contents/:path
- *   - To write a file: PUT  /repos/:owner/:repo/contents/:path  (requires the file's current SHA if updating)
- *   - To list a dir:   GET  /repos/:owner/:repo/contents/:path  (returns an array)
+ * All reads and writes go through the Cloudflare Worker, which adds the
+ * Personal Access Token server-side. No token ever appears in this file.
  */
 
-import { GITHUB_API_BASE, GITHUB_BRANCH } from './config.js';
+import { proxyUrl, GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH } from './config.js';
 
 // ─── Core fetch wrapper ────────────────────────────────────────────────────────
 
 /**
- * Makes an authenticated request to the GitHub Contents API.
+ * Makes a request to the Cloudflare Worker proxy, which forwards it to GitHub
+ * with the token added server-side.
  *
- * @param {string} path    - Repo-relative path, e.g. "campaigns/campaign-01/players/fat-tony.md"
- * @param {string} method  - HTTP method: "GET" | "PUT" | "DELETE"
- * @param {string} token   - Personal Access Token
- * @param {object} [body]  - Request body (for PUT/DELETE). Will be JSON-serialised.
+ * @param {string} repoPath - Repo-relative path, e.g. "campaigns/campaign-01/players/fat-tony.md"
+ * @param {string} method   - HTTP method: "GET" | "PUT"
+ * @param {object} [body]   - Request body for PUT requests. Will be JSON-serialised.
  * @returns {Promise<object>} Parsed JSON response from GitHub
  * @throws {Error} with a human-readable message if the request fails
  */
-async function githubRequest(path, method, token, body = null) {
-  const url = `${GITHUB_API_BASE}/${path}`;
+async function githubRequest(repoPath, method, body = null) {
+  const apiPath = `/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${repoPath}`;
+  const url     = proxyUrl(apiPath);
 
   const options = {
     method,
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Accept':        'application/vnd.github+json',
-      'X-GitHub-Api-Version': '2022-11-28',
-    },
+    headers: { 'Content-Type': 'application/json' },
   };
 
   if (body) {
-    options.headers['Content-Type'] = 'application/json';
     options.body = JSON.stringify(body);
   }
 
@@ -48,11 +39,10 @@ async function githubRequest(path, method, token, body = null) {
     try {
       const err = await response.json();
       detail = err.message || detail;
-    } catch (_) { /* ignore parse errors */ }
+    } catch (_) { /* ignore JSON parse errors on error responses */ }
     throw new Error(`GitHub API error (${response.status}): ${detail}`);
   }
 
-  // 204 No Content has no body
   if (response.status === 204) return null;
 
   return response.json();
@@ -61,16 +51,15 @@ async function githubRequest(path, method, token, body = null) {
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
- * Reads a single file from the repo and returns its decoded content.
+ * Reads a single file from the repo and returns its decoded text content and SHA.
  *
- * @param {string} path  - Repo-relative file path
- * @param {string} token - Personal Access Token
+ * @param {string} path - Repo-relative file path
  * @returns {Promise<{ content: string, sha: string }>}
  *   content = raw file text, sha = current file SHA (needed for subsequent writes)
  * @throws {Error} if the file does not exist or the request fails
  */
-export async function readFile(path, token) {
-  const data = await githubRequest(path, 'GET', token);
+export async function readFile(path) {
+  const data    = await githubRequest(path, 'GET');
   const content = atob(data.content.replace(/\n/g, ''));
   return { content, sha: data.sha };
 }
@@ -78,13 +67,12 @@ export async function readFile(path, token) {
 /**
  * Lists the contents of a directory in the repo.
  *
- * @param {string} path  - Repo-relative directory path (no trailing slash)
- * @param {string} token - Personal Access Token
+ * @param {string} path - Repo-relative directory path (no trailing slash)
  * @returns {Promise<Array<{ name: string, path: string, type: 'file'|'dir', sha: string }>>}
  * @throws {Error} if the directory does not exist or the request fails
  */
-export async function listDirectory(path, token) {
-  const data = await githubRequest(path, 'GET', token);
+export async function listDirectory(path) {
+  const data = await githubRequest(path, 'GET');
   if (!Array.isArray(data)) {
     throw new Error(`Expected a directory listing at "${path}" but got a file.`);
   }
@@ -97,18 +85,16 @@ export async function listDirectory(path, token) {
 }
 
 /**
- * Writes (creates or updates) a file in the repo.
+ * Writes (creates or updates) a file in the repo via a git commit.
  *
  * @param {string} path    - Repo-relative file path
  * @param {string} content - Raw text content to write
  * @param {string} message - Git commit message
- * @param {string} token   - Personal Access Token (must have write access)
- * @param {string} [sha]   - Current file SHA. Required when updating an existing file.
- *                           Omit (or pass null) when creating a new file.
+ * @param {string} [sha]   - Current file SHA. Required when updating; omit when creating.
  * @returns {Promise<{ sha: string }>} The new SHA of the written file
  * @throws {Error} if the write fails
  */
-export async function writeFile(path, content, message, token, sha = null) {
+export async function writeFile(path, content, message, sha = null) {
   const encodedContent = btoa(unescape(encodeURIComponent(content)));
 
   const body = {
@@ -119,64 +105,57 @@ export async function writeFile(path, content, message, token, sha = null) {
 
   if (sha) body.sha = sha;
 
-  const data = await githubRequest(path, 'PUT', token, body);
+  const data = await githubRequest(path, 'PUT', body);
   return { sha: data.content.sha };
 }
 
 /**
- * Copies a file from one path to another in the repo.
- * Reads the source, then creates the destination as a new file.
+ * Copies a file from one repo path to another.
+ * Reads the source then writes to the destination as a new file.
  *
- * @param {string} sourcePath - Repo-relative path of the file to copy
+ * @param {string} sourcePath - Repo-relative path of the source file
  * @param {string} destPath   - Repo-relative destination path
  * @param {string} message    - Git commit message
- * @param {string} token      - Personal Access Token (must have write access)
  * @returns {Promise<{ sha: string }>} SHA of the newly created file
  * @throws {Error} if the read or write fails
  */
-export async function copyFile(sourcePath, destPath, message, token) {
-  const { content } = await readFile(sourcePath, token);
-  return writeFile(destPath, content, message, token, null);
+export async function copyFile(sourcePath, destPath, message) {
+  const { content } = await readFile(sourcePath);
+  return writeFile(destPath, content, message, null);
 }
 
 /**
  * Reads all .md files within a directory (non-recursive).
- * Returns an array of { path, content, sha } objects.
  *
  * @param {string} dirPath - Repo-relative directory path
- * @param {string} token   - Personal Access Token
  * @returns {Promise<Array<{ path: string, content: string, sha: string }>>}
  */
-export async function readAllMarkdownFiles(dirPath, token) {
-  const entries = await listDirectory(dirPath, token);
+export async function readAllMarkdownFiles(dirPath) {
+  const entries = await listDirectory(dirPath);
   const mdFiles = entries.filter(e => e.type === 'file' && e.name.endsWith('.md'));
 
-  const results = await Promise.all(
+  return Promise.all(
     mdFiles.map(async (entry) => {
-      const { content, sha } = await readFile(entry.path, token);
+      const { content, sha } = await readFile(entry.path);
       return { path: entry.path, content, sha };
     })
   );
-
-  return results;
 }
 
 /**
  * Reads all campaigns from the repo's campaigns/ directory.
- * A campaign is any subdirectory containing a campaign.md file.
+ * A campaign is any subdirectory that contains a campaign.md file.
  *
- * @param {string} token - Personal Access Token
  * @returns {Promise<Array<{ id: string, name: string, path: string }>>}
- *   id = folder name (e.g. "campaign-01"), name = from campaign.md frontmatter
  */
-export async function listCampaigns(token) {
-  const entries = await listDirectory('campaigns', token);
-  const dirs = entries.filter(e => e.type === 'dir');
+export async function listCampaigns() {
+  const entries = await listDirectory('campaigns');
+  const dirs    = entries.filter(e => e.type === 'dir');
 
   const campaigns = [];
   for (const dir of dirs) {
     try {
-      const { content } = await readFile(`${dir.path}/campaign.md`, token);
+      const { content } = await readFile(`${dir.path}/campaign.md`);
       const fm = parseFrontmatter(content);
       campaigns.push({
         id:   fm.id   || dir.name,
@@ -195,9 +174,8 @@ export async function listCampaigns(token) {
 
 /**
  * Parses YAML frontmatter from a markdown file's raw content.
- * Frontmatter is the block between the opening and closing --- delimiters.
  *
- * @param {string} raw - Raw file content (markdown with optional frontmatter)
+ * @param {string} raw - Raw file content
  * @returns {object} Key-value pairs from the frontmatter, plus _body (the markdown below)
  */
 export function parseFrontmatter(raw) {
@@ -208,8 +186,7 @@ export function parseFrontmatter(raw) {
   if (end === -1) return result;
 
   const yamlBlock = raw.slice(3, end).trim();
-  const body      = raw.slice(end + 4).trim();
-  result._body    = body;
+  result._body    = raw.slice(end + 4).trim();
 
   for (const line of yamlBlock.split('\n')) {
     const colon = line.indexOf(':');
@@ -217,18 +194,14 @@ export function parseFrontmatter(raw) {
     const key = line.slice(0, colon).trim();
     let val   = line.slice(colon + 1).trim();
 
-    // Strip surrounding quotes
     if ((val.startsWith('"') && val.endsWith('"')) ||
         (val.startsWith("'") && val.endsWith("'"))) {
       val = val.slice(1, -1);
     }
 
-    // Convert booleans
-    if (val === 'true')  val = true;
-    if (val === 'false') val = false;
-
-    // Convert integers
-    if (/^\d+$/.test(val)) val = parseInt(val, 10);
+    if (val === 'true')        val = true;
+    else if (val === 'false')  val = false;
+    else if (/^\d+$/.test(val)) val = parseInt(val, 10);
 
     if (key) result[key] = val;
   }
@@ -237,10 +210,9 @@ export function parseFrontmatter(raw) {
 }
 
 /**
- * Serialises an object back into YAML frontmatter + markdown body string.
- * Used when updating a file's frontmatter fields.
+ * Serialises a frontmatter object back into a full markdown file string.
  *
- * @param {object} frontmatter - Key-value pairs (include _body for the markdown body)
+ * @param {object} frontmatter - Key-value pairs including _body for the markdown content
  * @returns {string} Full file content with frontmatter block
  */
 export function serialiseFrontmatter(frontmatter) {
@@ -252,8 +224,6 @@ export function serialiseFrontmatter(frontmatter) {
     if (v === null || v === undefined) return `${k}:`;
     if (typeof v === 'boolean') return `${k}: ${v}`;
     if (typeof v === 'number')  return `${k}: ${v}`;
-
-    // Quote strings that contain colons or special characters
     const needsQuotes = typeof v === 'string' && (v.includes(':') || v.includes('#'));
     return needsQuotes ? `${k}: "${v}"` : `${k}: ${v}`;
   });

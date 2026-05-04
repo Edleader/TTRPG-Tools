@@ -30,10 +30,7 @@ import {
   readAllMarkdownFiles,
 } from '../shared/github-api.js';
 
-import {
-  GITHUB_TOKEN_RW,
-  GITHUB_BRANCH,
-} from '../shared/config.js';
+// No token needed here — auth is handled by the Cloudflare Worker proxy
 
 'use strict';
 
@@ -72,7 +69,7 @@ async function fetchAllFiles(dirPath) {
 
   // Also load rules.md from repo root
   try {
-    const { content, sha } = await readFile('rules.md', GITHUB_TOKEN_RW);
+    const { content, sha } = await readFile('rules.md');
     const fm = parseFrontmatter(content);
     files.push({ path: 'rules.md', sha, frontmatter: fm, rawContent: content });
   } catch (_) {
@@ -92,7 +89,7 @@ async function fetchAllFiles(dirPath) {
 async function walkRepoDirectory(dirPath, results) {
   let entries;
   try {
-    entries = await listDirectory(dirPath, GITHUB_TOKEN_RW);
+    entries = await listDirectory(dirPath);
   } catch (e) {
     console.warn(`Could not list directory "${dirPath}":`, e.message);
     return;
@@ -109,7 +106,7 @@ async function walkRepoDirectory(dirPath, results) {
     if (entry.name === 'campaign.md')     continue;  // metadata only
 
     try {
-      const { content, sha } = await readFile(entry.path, GITHUB_TOKEN_RW);
+      const { content, sha } = await readFile(entry.path);
       const fm = parseFrontmatter(content);
       results.push({ path: entry.path, sha, frontmatter: fm, rawContent: content });
     } catch (e) {
@@ -138,7 +135,6 @@ async function saveMainContent() {
       state.currentFile.path,
       newContent,
       commitMsg,
-      GITHUB_TOKEN_RW,
       state.currentFile.sha
     );
 
@@ -172,7 +168,7 @@ async function saveDmNotes() {
   showSaveStatus('Saving notes…');
   try {
     const existingSha = state.dmNotesFile ? state.dmNotesFile.sha : null;
-    const { sha } = await writeFile(path, content, commitMsg, GITHUB_TOKEN_RW, existingSha);
+    const { sha } = await writeFile(path, content, commitMsg, existingSha);
 
     state.dmNotesFile = { path, sha, content };
     exitDmNotesEdit(true);
@@ -209,7 +205,7 @@ async function loadDmNotes() {
 
   const path = dmNotesPath(state.currentFile.path);
   try {
-    const { content, sha } = await readFile(path, GITHUB_TOKEN_RW);
+    const { content, sha } = await readFile(path);
     state.dmNotesFile = { path, sha, content };
   } catch (_) {
     // File doesn't exist yet — that's fine, it'll be created on first save
@@ -1390,7 +1386,7 @@ async function init() {
   showLoadingScreen('Connecting to GitHub…');
 
   try {
-    state.campaigns = await listCampaigns(GITHUB_TOKEN_RW);
+    state.campaigns = await listCampaigns();
   } catch (e) {
     document.getElementById('loading-screen').style.display = 'none';
     document.getElementById('error-screen').style.display  = '';
