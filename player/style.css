@@ -1025,22 +1025,30 @@ html, body {
   margin-top: 0.5rem;
 }
 
-/* Drop zones — scrollable, always tall enough to show cards */
+/* Drop zones — grid matching the real card page */
 .arrange-drop-zone {
-  display:        flex;
-  flex-direction: column;
-  gap:            0.6rem;
-  overflow-y:     auto;
-  border:         1px dashed var(--border);
-  border-radius:  6px;
-  padding:        0.5rem;
-  min-height:     140px;  /* roughly 2 cards */
+  display:               grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap:                   0.6rem;
+  align-content:         start;
+  overflow-y:            auto;
+  border:                1px dashed var(--border);
+  border-radius:         6px;
+  padding:               0.5rem;
+  min-height:            130px;
 }
 
-/* Active and hand each get half the centre column height */
+/* Active and hand each get half the centre column */
 .arrange-col-centre .arrange-drop-zone {
   flex: 1 1 0;
   min-height: 120px;
+}
+
+/* Incoming and discard columns — single column list */
+.arrange-col-incoming .arrange-drop-zone,
+.arrange-col-discard  .arrange-drop-zone {
+  grid-template-columns: 1fr;
+  min-height: 100px;
 }
 
 /* Card tiles inside the arrange overlay — match the real card-tile look */

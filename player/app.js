@@ -713,8 +713,9 @@ function onLootSessionUpdate(session) {
     }
   }
 
-  // All cards resolved
-  if (!anyPersonalPending && unclaimedGroup.length === 0 && !arrangeOpen) {
+  // All cards resolved — but only show if no loot arrange is in progress
+  const lootArrangeInProgress = arrangeOpen && (_arrange.context === 'loot-player' || _arrange.context === 'loot-group');
+  if (!anyPersonalPending && unclaimedGroup.length === 0 && !lootArrangeInProgress) {
     const anyUnclaimed = allCards.some(c => !c.claimedBy);
     if (!anyUnclaimed && allCards.length > 0) {
       showAllLootResolved();
@@ -1163,49 +1164,46 @@ function renderArrangeZones() {
  *
  * @param {string}  zoneId   - Element ID of the drop zone
  * @param {Array}   cards    - Cards to render in this zone
- * @param {boolean} readOnly - True for the incoming zone (no drag handle)
+ * @param {boolean} incoming - True for the incoming zone (distinct style, still draggable out)
  */
-function renderArrangeZone(zoneId, cards, readOnly) {
+function renderArrangeZone(zoneId, cards, incoming) {
   const zone = document.getElementById(zoneId);
   zone.innerHTML = '';
 
   if (cards.length === 0) {
-    zone.innerHTML = '<div class="arrange-empty">Empty</div>';
+    const empty = document.createElement('div');
+    empty.className   = 'arrange-empty';
+    empty.textContent = 'Empty';
+    zone.appendChild(empty);
     return;
   }
 
   for (const card of cards) {
     const tile = document.createElement('div');
-    // Use filename as the unique key to handle duplicate card names
     const cardId = card._path
       ? card._path.split('/').pop()
-      : (card.cardPath ? card.cardPath.split('/').pop() : card.name + '_' + Math.random());
+      : (card.cardPath ? card.cardPath.split('/').pop() + '_' + card.name : card.name + '_' + Math.random());
     tile.className      = 'arrange-card-tile card-type-' + (card.card_type || 'item').toLowerCase();
     tile.dataset.cardId = cardId;
+    if (incoming) tile.classList.add('arrange-card-incoming');
 
-    if (readOnly) {
-      tile.classList.add('arrange-card-incoming');
-      tile.innerHTML = `
-        <div class="arrange-card-body">
-          <div class="arrange-card-type">${escapeHtml(card.card_type || '')}</div>
-          <div class="arrange-card-name">${escapeHtml(card.name || '')}</div>
-          <div class="arrange-card-slot">Needs: ${escapeHtml(card.slots || 'hand')}</div>
-        </div>
-      `;
-    } else {
-      tile.innerHTML = `
-        <div class="arrange-drag-handle" title="Drag to move">&#8942;&#8942;&#8942;</div>
-        <div class="arrange-card-body">
-          <div class="arrange-card-type">${escapeHtml(card.card_type || '')}</div>
-          <div class="arrange-card-name">${escapeHtml(card.name || '')}</div>
-          <div class="arrange-card-slot">${escapeHtml(card.player_slot || card.slots || 'hand')}</div>
-        </div>
-      `;
-      tile.querySelector('.arrange-card-name').addEventListener('click', () => openCardModal(card));
-      tile.querySelector('.arrange-drag-handle').addEventListener('pointerdown', (e) => {
-        arrangeDragStart(e, tile, card);
-      });
-    }
+    // All cards — including incoming loot — are draggable so the player can place them
+    const slotLabel = incoming
+      ? `Incoming · needs ${escapeHtml(card.slots || 'hand')}`
+      : escapeHtml(card.player_slot || card.slots || 'hand');
+
+    tile.innerHTML = `
+      <div class="arrange-drag-handle" title="Drag to move">&#8942;&#8942;&#8942;</div>
+      <div class="arrange-card-body">
+        <div class="arrange-card-type">${escapeHtml(card.card_type || '')}</div>
+        <div class="arrange-card-name">${escapeHtml(card.name || '')}</div>
+        <div class="arrange-card-slot">${slotLabel}</div>
+      </div>
+    `;
+    tile.querySelector('.arrange-card-name').addEventListener('click', () => openCardModal(card));
+    tile.querySelector('.arrange-drag-handle').addEventListener('pointerdown', (e) => {
+      arrangeDragStart(e, tile, card);
+    });
 
     zone.appendChild(tile);
   }
@@ -1317,18 +1315,25 @@ function arrangeDragEnd(e) {
   document.removeEventListener('pointermove', arrangeDragMove, { capture: true });
   document.removeEventListener('pointerup',   arrangeDragEnd,  { capture: true });
 
-  // Sync _arrange arrays from the current DOM positions — cards stay in the DOM,
-  // we just rebuild the logical arrays to reflect where they ended up.
-  const allCards = [..._arrange.active, ..._arrange.hand, ..._arrange.discard];
-  const zones = ['active', 'hand', 'discard'];
+  // Sync _arrange arrays from the current DOM positions — includes incoming zone
+  // since incoming cards are now draggable into active/hand.
+  const allCards = [..._arrange.active, ..._arrange.hand, ..._arrange.discard, ..._arrange.incoming];
+
+  function resolveCardId(id) {
+    return allCards.find(c => {
+      if (c._path) return c._path.split('/').pop() === id;
+      if (c.cardPath) return (c.cardPath.split('/').pop() + '_' + c.name) === id;
+      return false;
+    });
+  }
+
+  const zones = ['active', 'hand', 'discard', 'incoming'];
   for (const zoneName of zones) {
     const zoneEl = document.getElementById(`arrange-${zoneName}-zone`);
-    const ids    = Array.from(zoneEl.querySelectorAll('.arrange-card-tile[data-card-id]'))
-                       .map(el => el.dataset.cardId);
-    _arrange[zoneName] = ids.map(id => allCards.find(c => {
-      const cid = c._path ? c._path.split('/').pop() : (c.cardPath ? c.cardPath.split('/').pop() : null);
-      return cid === id;
-    })).filter(Boolean);
+    if (!zoneEl) continue;
+    const ids = Array.from(zoneEl.querySelectorAll('.arrange-card-tile[data-card-id]'))
+                     .map(el => el.dataset.cardId);
+    _arrange[zoneName] = ids.map(resolveCardId).filter(Boolean);
   }
 
   // Validate: only slots:active cards can be in the active zone
@@ -1354,7 +1359,7 @@ function arrangeDragEnd(e) {
     `Hand (${_arrange.hand.length} / ${maxHand})`;
 
   // Show/hide "Empty" placeholders in each zone
-  const zoneNames = ['active', 'hand', 'discard'];
+  const zoneNames = ['active', 'hand', 'discard', 'incoming'];
   for (const zoneName of zoneNames) {
     const zoneEl  = document.getElementById(`arrange-${zoneName}-zone`);
     const hasTiles = zoneEl.querySelector('.arrange-card-tile');
@@ -1447,22 +1452,24 @@ async function finaliseArrange() {
   btn.textContent = 'Saving…';
 
   try {
-    // 1. Delete discarded cards
+    // 1. Delete discarded cards — re-read for fresh SHA to avoid stale SHA errors
     for (const card of _arrange.discard) {
-      if (card._path && card._sha) {
-        await deleteFile(card._path, card._sha, `Discard ${card.name} from ${state.characterSlug}`);
+      if (!card._path) continue;
+      try {
+        const { sha: freshSha } = await readFile(card._path);
+        await deleteFile(card._path, freshSha, `Discard ${card.name} from ${state.characterSlug}`);
+      } catch (delErr) {
+        console.warn(`Could not delete ${card.name}:`, delErr);
       }
     }
 
-    // 2. Update player_slot on all owned cards where the slot changed
+    // 2. Update player_slot on all owned cards that moved zones
     const originalActive = new Set((state._activeCards || []).map(c => c._path));
     const originalHand   = new Set((state._handCards   || []).map(c => c._path));
 
     for (const card of _arrange.active) {
-      if (!card._path) continue; // incoming card — handled below
-      const wasActive = originalActive.has(card._path);
-      if (!wasActive) {
-        // Moved from hand to active — update frontmatter
+      // Only update if it was originally in hand (i.e. actually moved to active)
+      if (card._path && originalHand.has(card._path)) {
         const { content, sha } = await readFile(card._path);
         const fm2 = parseFrontmatter(content);
         fm2.player_slot = 'active';
@@ -1471,10 +1478,7 @@ async function finaliseArrange() {
     }
 
     for (const card of _arrange.hand) {
-      if (!card._path) continue;
-      const wasHand = originalHand.has(card._path);
-      if (!wasHand) {
-        // Moved from active to hand
+      if (card._path && originalActive.has(card._path)) {
         const { content, sha } = await readFile(card._path);
         const fm2 = parseFrontmatter(content);
         fm2.player_slot = 'hand';
@@ -1482,21 +1486,15 @@ async function finaliseArrange() {
       }
     }
 
-    // 3. Deliver incoming loot cards
-    for (const card of _arrange.incoming) {
-      // Determine which zone this card ended up in (it won't be in incoming anymore —
-      // but incoming cards are read-only in the zone, so they stay as-is). We need
-      // the player to have decided — incoming cards that have no _path stay in the
-      // incoming zone conceptually; the chosen slots are in _arrange.active/.hand
-      // based on where they dragged from. But incoming cards ARE draggable in the
-      // loot context... actually incoming is read-only. We place them based on
-      // context rules.
-      let slot = _arrange.preferredSlot || card.slots || 'hand';
-      // For loot-player: hand cards → hand, active cards → hand (if space) else active
-      if (_arrange.context === 'loot-player') {
-        slot = (card.slots || 'hand') === 'hand' ? 'hand'
-          : _arrange.hand.length < maxHand ? 'hand' : 'active';
-      }
+    // 3. Deliver incoming loot cards — slot = wherever player dragged them
+    //    Check active zone first, then hand, then fall back to preferredSlot/slots
+    const incomingSet = new Set(state.lootNotifyCards.map(c => c.key || c.name));
+    for (const card of state.lootNotifyCards) {
+      const isInActive = _arrange.active.some(c => c.key === card.key || c.name === card.name);
+      const isInHand   = _arrange.hand.some(c => c.key === card.key || c.name === card.name);
+      let slot = isInActive ? 'active'
+               : isInHand   ? 'hand'
+               : _arrange.preferredSlot || card.slots || 'hand';
       await deliverCardToPlayer(card, state.characterSlug, slot);
     }
   } catch (e) {
