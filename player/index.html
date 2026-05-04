@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>Player Sheet</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ================================================
+       LOADING SCREEN
+       ================================================ -->
+  <div id="loading-screen">
+    <h1>Player Sheet</h1>
+    <p class="loading-message">Connecting…</p>
+    <div class="loading-spinner"></div>
+  </div>
+
+  <!-- ================================================
+       ERROR SCREEN
+       ================================================ -->
+  <div id="error-screen" style="display:none">
+    <h1>Player Sheet</h1>
+    <p class="error-heading">Something went wrong</p>
+    <pre id="error-message" class="error-message"></pre>
+    <button class="btn" onclick="location.reload()">Try Again</button>
+  </div>
+
+  <!-- ================================================
+       LOGIN SCREEN — campaign → character → PIN
+       ================================================ -->
+  <div id="login-screen" style="display:none">
+    <div class="login-card">
+      <h1>Player Sheet</h1>
+
+      <!-- Step 1: campaign -->
+      <div id="login-step-campaign" class="login-step">
+        <label class="login-label">Select campaign</label>
+        <select id="select-campaign" class="login-select">
+          <option value="">— choose —</option>
+        </select>
+      </div>
+
+      <!-- Step 2: character (shown after campaign chosen) -->
+      <div id="login-step-character" class="login-step" style="display:none">
+        <label class="login-label">Select character</label>
+        <select id="select-character" class="login-select">
+          <option value="">— choose —</option>
+        </select>
+      </div>
+
+      <!-- Step 3: PIN (shown after character chosen) -->
+      <div id="login-step-pin" class="login-step" style="display:none">
+        <label class="login-label">Enter PIN</label>
+        <div class="pin-dots" id="pin-dots">
+          <span class="pin-dot"></span>
+          <span class="pin-dot"></span>
+          <span class="pin-dot"></span>
+          <span class="pin-dot"></span>
+        </div>
+        <div class="pin-pad">
+          <button class="pin-key" data-digit="1">1</button>
+          <button class="pin-key" data-digit="2">2</button>
+          <button class="pin-key" data-digit="3">3</button>
+          <button class="pin-key" data-digit="4">4</button>
+          <button class="pin-key" data-digit="5">5</button>
+          <button class="pin-key" data-digit="6">6</button>
+          <button class="pin-key" data-digit="7">7</button>
+          <button class="pin-key" data-digit="8">8</button>
+          <button class="pin-key" data-digit="9">9</button>
+          <button class="pin-key pin-key-clear" id="pin-clear">Clear</button>
+          <button class="pin-key" data-digit="0">0</button>
+          <div></div>
+        </div>
+        <p id="pin-error" class="pin-error" style="display:none">Incorrect PIN. Try again.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================================
+       MAIN APP
+       ================================================ -->
+  <div id="app" style="display:none">
+
+    <!-- Session inactive banner -->
+    <div id="session-banner" class="session-banner" style="display:none">
+      Session not active — view only
+    </div>
+
+    <!-- ── TOP HEADER ─────────────────────────────── -->
+    <header class="sheet-header">
+      <div class="header-name-block">
+        <div class="char-name" id="char-name"></div>
+        <div class="char-sub" id="char-sub"></div>
+      </div>
+      <div class="header-stats-block">
+        <div class="stat-pill">
+          <span class="stat-pill-label">MIG</span>
+          <span class="stat-pill-value" id="stat-might"></span>
+        </div>
+        <div class="stat-pill">
+          <span class="stat-pill-label">FIN</span>
+          <span class="stat-pill-value" id="stat-finesse"></span>
+        </div>
+        <div class="stat-pill">
+          <span class="stat-pill-label">MND</span>
+          <span class="stat-pill-value" id="stat-mind"></span>
+        </div>
+      </div>
+    </header>
+
+    <!-- ── HP + SPELL SLOTS ROW ───────────────────── -->
+    <section class="vitals-row">
+
+      <!-- HP block -->
+      <div class="vitals-block hp-block">
+        <div class="vitals-label">HP</div>
+        <div class="hp-controls">
+          <button class="hp-btn hp-minus" id="btn-hp-minus" aria-label="Decrease HP">−</button>
+          <div class="hp-display">
+            <span class="hp-current" id="hp-current">—</span>
+            <span class="hp-sep">/</span>
+            <span class="hp-max" id="hp-max">—</span>
+          </div>
+          <button class="hp-btn hp-plus" id="btn-hp-plus" aria-label="Increase HP">+</button>
+        </div>
+        <!-- Custom amount input for big adjustments -->
+        <div class="hp-custom-row">
+          <input type="number" id="hp-custom-amount" class="hp-custom-input" min="1" max="999" placeholder="amt" aria-label="Custom HP amount">
+          <button class="hp-custom-btn" id="btn-hp-damage" aria-label="Apply damage">Dmg</button>
+          <button class="hp-custom-btn hp-custom-heal" id="btn-hp-heal" aria-label="Apply healing">Heal</button>
+        </div>
+      </div>
+
+      <!-- Spell slots block (hidden if max slots = 0) -->
+      <div class="vitals-block spell-block" id="spell-block" style="display:none">
+        <div class="vitals-label">Spell Slots <span class="spell-count" id="spell-count"></span></div>
+        <div class="spell-bubbles" id="spell-bubbles"></div>
+      </div>
+
+    </section>
+
+    <!-- ── PERKS ──────────────────────────────────── -->
+    <section class="sheet-section" id="perks-section" style="display:none">
+      <div class="section-header">Perks</div>
+      <div class="perks-list" id="perks-list"></div>
+    </section>
+
+    <!-- ── ACTIVE CARDS ───────────────────────────── -->
+    <section class="sheet-section">
+      <div class="section-header">
+        Active Slots
+        <span class="slot-count" id="active-slot-count"></span>
+      </div>
+      <div class="cards-grid" id="active-cards-grid"></div>
+    </section>
+
+    <!-- ── HAND CARDS ─────────────────────────────── -->
+    <section class="sheet-section">
+      <div class="section-header">
+        Hand
+        <span class="slot-count" id="hand-slot-count"></span>
+      </div>
+      <div class="cards-grid" id="hand-cards-grid"></div>
+    </section>
+
+    <!-- ── REST BUTTONS ───────────────────────────── -->
+    <section class="sheet-section rest-section">
+      <button class="btn btn-rest" id="btn-short-rest">Short Rest</button>
+      <button class="btn btn-rest btn-long-rest" id="btn-long-rest">Long Rest</button>
+    </section>
+
+    <!-- ── QUICK REFERENCE ────────────────────────── -->
+    <section class="sheet-section qref-section">
+      <button class="qref-toggle" id="qref-toggle" aria-expanded="false">
+        Quick Reference <span class="qref-arrow">&#9654;</span>
+      </button>
+      <div class="qref-body" id="qref-body" style="display:none">
+        <div class="qref-col">
+          <strong>HP</strong>
+          <p>Max HP = (Level + Might) &times; 2</p>
+
+          <strong>Spell Slots</strong>
+          <p>Base = Mind &divide; 2, rounded down (max 6)<br>
+          Mind &gt; 12: +1 slot per character level</p>
+
+          <strong>Roll Mechanic</strong>
+          <p>Determine Target Number<br>
+          Roll d20 &mdash; equal to or under = success<br>
+          Advantage: roll 2d20, take lower<br>
+          Disadvantage: roll 2d20, take higher<br>
+          Rolling a 1 is always a critical success</p>
+        </div>
+        <div class="qref-col">
+          <strong>Short Rest</strong>
+          <p>Restore half missing HP (round up)<br>
+          Restore half spent Spell Slots (round up)<br>
+          Recover Short Rest abilities</p>
+
+          <strong>Long Rest</strong>
+          <p>Restore all HP<br>
+          Restore all Spell Slots<br>
+          Recover all abilities<br>
+          Swap as many cards as you want</p>
+
+          <strong>Movement</strong>
+          <p>Base: 14 metres<br>
+          Straight: 2 m per square<br>
+          Diagonal: 3 m per square</p>
+        </div>
+        <div class="qref-col">
+          <strong>Combat Actions</strong>
+          <p>Primary Action (choose one):<br>
+          &bull; Attack (weapon / spell / unarmed)<br>
+          &bull; Combat Manoeuvre (Grapple / Shove)<br>
+          &bull; Use Ability card<br>
+          &bull; Interact with environment<br>
+          &bull; Double movement</p>
+          <p>Also each turn:<br>
+          &bull; Play one Hand card<br>
+          &bull; Move up to your limit<br>
+          &bull; Shout something</p>
+          <p><em>If it's not listed, describe it and let the GM decide.</em></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── LOGOUT ─────────────────────────────────── -->
+    <div class="logout-row">
+      <button class="btn btn-logout" id="btn-logout">Switch Character</button>
+    </div>
+
+  </div><!-- /#app -->
+
+  <!-- ── CARD DETAIL MODAL ──────────────────────────── -->
+  <div id="card-modal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <button class="modal-close" id="modal-close" aria-label="Close">&times;</button>
+      <div class="modal-content" id="modal-content"></div>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -48,7 +48,6 @@ const state = {
   dmNotesFile:      null,    // { path, sha, content } for the current .dm.md file
   hpEntries:        [],      // [{ id, name, current, max }] — enemy HP tracker
   nextHpId:         1,
-  playerFiles:      [],      // Subset of files where frontmatter.type === 'player'
   backgroundDone:   false,   // True once background content load is complete
 };
 
@@ -77,11 +76,10 @@ async function fetchFileIndex(dirPath) {
     stubs.push({ path: 'rules.md', sha, frontmatter: fm, rawContent: content, loaded: true });
   } catch (_) { /* no rules.md — skip */ }
 
-  // Eagerly load player files and the campaign overview so the player panel
-  // and empty state are populated before the background load finishes.
+  // Eagerly load the campaign overview so the empty state is populated quickly.
   await Promise.all(
     stubs
-      .filter(f => !f.loaded && (isPlayerFile(f) || f.path.endsWith('campaign-overview.md')))
+      .filter(f => !f.loaded && f.path.endsWith('campaign-overview.md'))
       .map(f => loadFileContent(f))
   );
 
@@ -189,10 +187,9 @@ async function backgroundLoadAllContent(files) {
   state.backgroundDone = true;
   setSearchEnabled(true);
 
-  // Rebuild sidebar and player panel now that real frontmatter is available
+  // Rebuild sidebar now that real frontmatter is available
   buildSidebar(state.files);
   restoreActiveNavItem();
-  renderPlayerPanel(state.files);
 }
 
 /**
@@ -240,10 +237,6 @@ async function saveMainContent() {
     exitEditMode(true);
     buildSidebar(state.files);
     restoreActiveNavItem();
-
-    if (isPlayerFile(state.currentFile)) {
-      renderPlayerPanel(state.files);
-    }
 
     showSaveStatus('Saved', 2000);
   } catch (e) {
@@ -1057,132 +1050,6 @@ function doSearch(query) {
 }
 
 // =====================================================
-// PLAYER PANEL
-// =====================================================
-
-/**
- * Renders the player panel in the bottom bar from the loaded player files.
- * Displays each player's stats, level, and perk summary.
- *
- * @param {Array} files - All loaded file objects
- */
-function renderPlayerPanel(files) {
-  state.playerFiles = files
-    .filter(f => isPlayerFile(f))
-    .sort((a, b) => (a.frontmatter.name || a.path).toLowerCase()
-      .localeCompare((b.frontmatter.name || b.path).toLowerCase()));
-
-  const body       = document.getElementById('player-panel-body');
-  const levelLabel = document.getElementById('player-panel-level-label');
-
-  if (state.playerFiles.length === 0) {
-    body.innerHTML = '<span class="hp-empty">No player files found.</span>';
-    return;
-  }
-
-  const anyLevel = state.playerFiles.map(f => f.frontmatter.level).find(l => l);
-  levelLabel.textContent = anyLevel ? `Party — Level ${anyLevel}` : 'Party';
-
-  const wrap = document.createElement('div');
-  wrap.className = 'player-cards';
-
-  for (const pf of state.playerFiles) {
-    const fm = pf.frontmatter;
-    const card = document.createElement('div');
-    card.className = 'player-card';
-    card.innerHTML = `
-      <div class="player-card-name" title="${escapeHtml(fm.name || '')}">${escapeHtml(fm.name || filenameLabel(pf.path))}</div>
-      ${fm.player ? `<div class="player-card-player">(${escapeHtml(fm.player)})</div>` : ''}
-      <div class="player-card-stats">
-        <div class="stat-block"><span class="stat-label">MIG</span><span class="stat-value">${escapeHtml(String(fm.might  || '–'))}</span></div>
-        <div class="stat-block"><span class="stat-label">FIN</span><span class="stat-value">${escapeHtml(String(fm.finesse || '–'))}</span></div>
-        <div class="stat-block"><span class="stat-label">MND</span><span class="stat-value">${escapeHtml(String(fm.mind   || '–'))}</span></div>
-      </div>
-      ${fm.playstyle ? `<div class="player-card-playstyle">${escapeHtml(fm.playstyle)}</div>` : ''}
-      <div class="player-card-perks">
-        ${makePerkRow('Lv5',  fm.perk_5  || '')}
-        ${makePerkRow('Lv10', fm.perk_10 || '')}
-        ${makePerkRow('Lv17', fm.perk_17 || '')}
-      </div>
-    `;
-    wrap.appendChild(card);
-  }
-
-  body.innerHTML = '';
-  body.appendChild(wrap);
-
-  body.querySelectorAll('.perk-row.has-perk').forEach(row => {
-    row.addEventListener('mouseenter', showPerkTooltip);
-    row.addEventListener('mousemove',  movePerkTooltip);
-    row.addEventListener('mouseleave', hidePerkTooltip);
-  });
-}
-
-/**
- * Returns HTML for a single perk row in the player panel card.
- *
- * @param {string} levelLabel - e.g. "Lv5"
- * @param {string} perkText   - Perk name and optional description, separated by "|"
- * @returns {string} HTML string
- */
-function makePerkRow(levelLabel, perkText) {
-  if (!perkText || !perkText.trim()) {
-    return `<div class="perk-row">${escapeHtml(levelLabel)}: —</div>`;
-  }
-  const pipeIdx  = perkText.indexOf('|');
-  const perkName = pipeIdx > -1 ? perkText.slice(0, pipeIdx).trim() : perkText.trim();
-  const perkDesc = pipeIdx > -1 ? perkText.slice(pipeIdx + 1).trim() : '';
-  const encoded  = encodeURIComponent(JSON.stringify({ name: perkName, desc: perkDesc, level: levelLabel }));
-  return `<div class="perk-row has-perk" data-perk="${escapeHtml(encoded)}">${escapeHtml(levelLabel)}: ${escapeHtml(perkName)}</div>`;
-}
-
-let _tooltipEl = null;
-
-function getPerkTooltip() {
-  if (!_tooltipEl) {
-    _tooltipEl = document.createElement('div');
-    _tooltipEl.className = 'perk-tooltip';
-    _tooltipEl.style.display = 'none';
-    document.body.appendChild(_tooltipEl);
-  }
-  return _tooltipEl;
-}
-
-function showPerkTooltip(e) {
-  const row = e.currentTarget;
-  let data;
-  try { data = JSON.parse(decodeURIComponent(row.dataset.perk)); } catch { return; }
-  const tip = getPerkTooltip();
-  tip.innerHTML = `<strong>${escapeHtml(data.name)}</strong>${data.desc
-    ? escapeHtml(data.desc)
-    : '<em style="color:var(--text-faint)">No description set.</em>'}`;
-  tip.style.display = 'block';
-  positionTooltip(tip, e);
-}
-
-function movePerkTooltip(e) {
-  const tip = getPerkTooltip();
-  if (tip.style.display === 'none') return;
-  positionTooltip(tip, e);
-}
-
-function hidePerkTooltip() {
-  getPerkTooltip().style.display = 'none';
-}
-
-function positionTooltip(tip, e) {
-  const margin = 12;
-  const tw = tip.offsetWidth  || 260;
-  const th = tip.offsetHeight || 80;
-  let x = e.clientX + margin;
-  let y = e.clientY + margin;
-  if (x + tw > window.innerWidth)  x = e.clientX - tw - margin;
-  if (y + th > window.innerHeight) y = e.clientY - th - margin;
-  tip.style.left = `${x}px`;
-  tip.style.top  = `${y}px`;
-}
-
-// =====================================================
 // HP TRACKER
 // =====================================================
 
@@ -1235,20 +1102,20 @@ function renderHpBar() {
   }
 
   for (const entry of state.hpEntries) {
-    const pct  = entry.max > 0 ? (entry.current / entry.max) * 100 : 0;
     const card = document.createElement('div');
     card.className  = 'hp-entry';
     card.dataset.id = entry.id;
     card.innerHTML  = `
       <div class="hp-entry-name" title="${escapeHtml(entry.name)}">${escapeHtml(entry.name)}</div>
-      <div class="hp-bar-visual"><div class="hp-bar-fill" style="width:${pct}%"></div></div>
-      <div class="hp-values">${entry.current} / ${entry.max} HP</div>
       <div class="hp-controls">
-        <button class="btn btn-secondary btn-xs" data-action="minus5" data-id="${entry.id}">-5</button>
-        <button class="btn btn-secondary btn-xs" data-action="minus1" data-id="${entry.id}">-1</button>
-        <button class="btn btn-secondary btn-xs" data-action="plus1"  data-id="${entry.id}">+1</button>
-        <button class="btn btn-secondary btn-xs" data-action="plus5"  data-id="${entry.id}">+5</button>
-        <button class="btn btn-danger    btn-xs" data-action="remove" data-id="${entry.id}">&#10005;</button>
+        <button class="btn btn-secondary btn-xs" data-action="minus1" data-id="${entry.id}">−</button>
+        <span class="hp-values">${entry.current} / ${entry.max}</span>
+        <button class="btn btn-secondary btn-xs" data-action="plus1"  data-id="${entry.id}">+</button>
+        <input  type="number" class="hp-custom-input" min="1" placeholder="amt"
+                data-hp-input="${entry.id}" style="width:3.5rem">
+        <button class="btn btn-secondary btn-xs" data-action="custom-dmg"  data-id="${entry.id}">Dmg</button>
+        <button class="btn btn-secondary btn-xs" data-action="custom-heal" data-id="${entry.id}">Heal</button>
+        <button class="btn btn-danger    btn-xs" data-action="remove"      data-id="${entry.id}">&#10005;</button>
       </div>
     `;
     container.appendChild(card);
@@ -1377,7 +1244,6 @@ async function loadCampaign(campaign) {
 
   buildSidebar(state.files);
   renderHpBar();
-  renderPlayerPanel(state.files);
 
   document.getElementById('content-view').innerHTML = `
     <div class="empty-state">
@@ -1570,14 +1436,6 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('hp-bar'),
     120, 48
   );
-  makeColResizer(
-    document.getElementById('hp-col-resizer'),
-    document.getElementById('hp-tracker-pane'),
-    document.getElementById('player-panel'),
-    document.getElementById('hp-bar'),
-    180, 130
-  );
-
   // Search
   const searchInput = document.getElementById('search-input');
   searchInput.addEventListener('input', (e) => doSearch(e.target.value));
@@ -1591,11 +1449,16 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!btn) return;
     const id     = parseInt(btn.dataset.id);
     const action = btn.dataset.action;
-    if (action === 'minus5') adjustHp(id, -5);
-    if (action === 'minus1') adjustHp(id, -1);
-    if (action === 'plus1')  adjustHp(id, +1);
-    if (action === 'plus5')  adjustHp(id, +5);
-    if (action === 'remove') removeHpEntry(id);
+    if (action === 'minus1') { adjustHp(id, -1); return; }
+    if (action === 'plus1')  { adjustHp(id, +1); return; }
+    if (action === 'remove') { removeHpEntry(id); return; }
+    if (action === 'custom-dmg' || action === 'custom-heal') {
+      const input = document.querySelector(`[data-hp-input="${id}"]`);
+      const amt   = parseInt(input ? input.value : '');
+      if (!amt || amt < 1) return;
+      adjustHp(id, action === 'custom-dmg' ? -amt : +amt);
+      if (input) input.value = '';
+    }
   });
 
   document.getElementById('btn-add-enemy').addEventListener('click', () => {
