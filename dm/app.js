@@ -37,7 +37,7 @@ import {
 
 import { initializeApp }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getDatabase, ref, onValue }
+import { getDatabase, ref, onValue, set }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
 
 const _fbApp = initializeApp(FIREBASE_CONFIG);
@@ -63,6 +63,7 @@ const state = {
   nextHpId:         1,
   playerFiles:      [],      // Subset of files where frontmatter.type === 'player'
   playerHpLive:     {},      // { [slug]: currentHp } — live from Firebase
+  sessionActive:    false,   // Whether the DM has started the session
   backgroundDone:   false,   // True once background content load is complete
   _fbUnsub:         null,    // Firebase listener unsubscribe
 };
@@ -1149,11 +1150,18 @@ function subscribePlayerHp(campaignId) {
   if (state._fbUnsub) { state._fbUnsub(); state._fbUnsub = null; }
 
   const sessionRef = ref(_db, `${firebaseCampaignPath(campaignId)}/session`);
-  state._fbUnsub   = onValue(sessionRef, (snapshot) => {
+  // Also listen to session_active at the campaign level
+  const campaignRef = ref(_db, firebaseCampaignPath(campaignId));
+  state._fbUnsub    = onValue(campaignRef, (snapshot) => {
     const data = snapshot.val() || {};
-    // data is { [slug]: { hp_current: N, ... } }
+
+    state.sessionActive = data.session_active === true;
+    const btn = document.getElementById('btn-session-toggle');
+    if (btn) btn.textContent = state.sessionActive ? 'End Session' : 'Start Session';
+
+    // data.session is { [slug]: { hp_current: N, ... } }
     state.playerHpLive = {};
-    for (const [slug, playerData] of Object.entries(data)) {
+    for (const [slug, playerData] of Object.entries(data.session || {})) {
       if (typeof playerData?.hp_current === 'number') {
         state.playerHpLive[slug] = playerData.hp_current;
       }
@@ -1596,6 +1604,19 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-clear-hp').addEventListener('click', () => {
     if (state.hpEntries.length === 0) return;
     if (confirm('Clear all HP trackers?')) clearAllHp();
+  });
+
+  // Session toggle button
+  document.getElementById('btn-session-toggle').addEventListener('click', async () => {
+    if (!state.activeCampaign) return;
+    const newState = !state.sessionActive;
+    const label    = newState ? 'start' : 'end';
+    if (!confirm(`Are you sure you want to ${label} the session?`)) return;
+    try {
+      await set(ref(_db, `${firebaseCampaignPath(state.activeCampaign.id)}/session_active`), newState);
+    } catch (e) {
+      alert('Could not update session state: ' + e.message);
+    }
   });
 
   // Campaign switch button
