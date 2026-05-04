@@ -407,10 +407,13 @@ async function loadAndRenderCards() {
   }
 
   if (inventoryFiles.length === 0) {
+    const maxActive = state.fm.active_slots || 4;
+    const maxHand   = state.fm.hand_slots   || 4;
+    document.getElementById('active-section-header').textContent = `Active Slots (0 / ${maxActive})`;
+    document.getElementById('hand-section-header').textContent   = `Hand (0 / ${maxHand})`;
+    document.getElementById('stat-armour').textContent = '0';
     activeEl.innerHTML = '<p class="cards-empty">No cards in inventory.</p>';
     handEl.innerHTML   = '';
-    document.getElementById('active-slot-count').textContent = '';
-    document.getElementById('hand-slot-count').textContent   = '';
     return;
   }
 
@@ -431,10 +434,16 @@ async function loadAndRenderCards() {
   const maxActive = state.fm.active_slots || 4;
   const maxHand   = state.fm.hand_slots   || 4;
 
-  document.getElementById('active-slot-count').textContent =
-    `${activeCards.length} / ${maxActive}`;
-  document.getElementById('hand-slot-count').textContent =
-    `${handCards.length} / ${maxHand}`;
+  document.getElementById('active-section-header').textContent =
+    `Active Slots (${activeCards.length} / ${maxActive})`;
+  document.getElementById('hand-section-header').textContent =
+    `Hand (${handCards.length} / ${maxHand})`;
+
+  // Armour = sum of DR values from active armour cards
+  const totalArmour = activeCards
+    .filter(c => (c.card_type || '').toLowerCase() === 'armour')
+    .reduce((sum, c) => sum + (parseInt(c.dr) || 0), 0);
+  document.getElementById('stat-armour').textContent = totalArmour;
 
   renderCardGrid(activeEl, activeCards);
   renderCardGrid(handEl,   handCards);
@@ -513,7 +522,9 @@ function renderMarkdownSimple(text) {
 function showRestOverlay(type) {
   const label = type === 'short' ? 'Short Rest' : 'Long Rest';
   document.getElementById('rest-overlay-label').textContent = `${label} in progress…`;
-  document.getElementById('rest-overlay').style.display = '';
+  document.getElementById('rest-overlay').style.display    = '';
+  // Re-show the cancel button in case it was hidden
+  document.getElementById('rest-overlay-cancel').style.display = '';
 }
 
 function hideRestOverlay() {
@@ -534,7 +545,7 @@ async function cancelRestRequest() {
  */
 async function requestRest(type) {
   const label = type === 'short' ? 'Short Rest' : 'Long Rest';
-  if (!confirm(`Take a ${label}?`)) return;
+  if (!confirm(`Are you sure you want to take a ${label}?`)) return;
 
   if (!state.sessionActive) {
     alert('No active session right now.');

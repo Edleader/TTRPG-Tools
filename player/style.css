@@ -206,27 +206,25 @@ html, body {
 }
 
 .header-name-block {
-  display:        flex;
-  align-items:    center;
-  gap:            0.85rem;
-  flex-wrap:      wrap;
+  flex: 1;
 }
 
 .char-name {
-  font-size:   1.35rem;
+  font-size:   1.4rem;
   font-weight: 700;
   line-height: 1.2;
 }
 .char-sub {
-  font-size:  0.8rem;
+  font-size:  0.82rem;
   color:      var(--text-sub);
-  margin-top: 0.1rem;
+  margin-top: 0.15rem;
 }
 
-/* Stats sit inline with name on the left side of the header */
-.header-name-stats {
-  display: flex;
-  gap:     0.45rem;
+.header-stats-block {
+  display:   flex;
+  gap:       0.5rem;
+  flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
 .stat-pill {
@@ -236,8 +234,8 @@ html, body {
   background:     var(--surface-2);
   border:         1px solid var(--border);
   border-radius:  var(--radius-sm);
-  padding:        0.35rem 0.7rem;
-  min-width:      54px;
+  padding:        0.4rem 0.75rem;
+  min-width:      56px;
 }
 .stat-pill-label {
   font-size:   0.68rem;
@@ -246,7 +244,7 @@ html, body {
   letter-spacing: 0.05em;
 }
 .stat-pill-value {
-  font-size:   1.35rem;
+  font-size:   1.5rem;
   font-weight: 700;
   line-height: 1;
   margin-top:  0.1rem;
@@ -614,6 +612,12 @@ html, body {
   font-size:   1rem;
   font-weight: 600;
   color:       var(--text);
+}
+
+.rest-overlay-sub {
+  font-size: 0.82rem;
+  color:     var(--text-sub);
+  margin-top: -0.5rem;
 }
 
 .rest-overlay-cancel {

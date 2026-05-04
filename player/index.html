@@ -91,23 +91,25 @@
     <!-- ── TOP HEADER ─────────────────────────────── -->
     <header class="sheet-header">
       <div class="header-name-block">
-        <div>
-          <div class="char-name" id="char-name"></div>
-          <div class="char-sub" id="char-sub"></div>
+        <div class="char-name" id="char-name"></div>
+        <div class="char-sub" id="char-sub"></div>
+      </div>
+      <div class="header-stats-block">
+        <div class="stat-pill">
+          <span class="stat-pill-label">MIG</span>
+          <span class="stat-pill-value" id="stat-might"></span>
         </div>
-        <div class="header-name-stats">
-          <div class="stat-pill">
-            <span class="stat-pill-label">MIG</span>
-            <span class="stat-pill-value" id="stat-might"></span>
-          </div>
-          <div class="stat-pill">
-            <span class="stat-pill-label">FIN</span>
-            <span class="stat-pill-value" id="stat-finesse"></span>
-          </div>
-          <div class="stat-pill">
-            <span class="stat-pill-label">MND</span>
-            <span class="stat-pill-value" id="stat-mind"></span>
-          </div>
+        <div class="stat-pill">
+          <span class="stat-pill-label">FIN</span>
+          <span class="stat-pill-value" id="stat-finesse"></span>
+        </div>
+        <div class="stat-pill">
+          <span class="stat-pill-label">MND</span>
+          <span class="stat-pill-value" id="stat-mind"></span>
+        </div>
+        <div class="stat-pill">
+          <span class="stat-pill-label">ARM</span>
+          <span class="stat-pill-value" id="stat-armour">0</span>
         </div>
       </div>
     </header>
@@ -151,18 +153,16 @@
 
     <!-- ── ACTIVE CARDS ───────────────────────────── -->
     <section class="sheet-section">
-      <div class="section-header">
+      <div class="section-header" id="active-section-header">
         Active Slots
-        <span class="slot-count" id="active-slot-count"></span>
       </div>
       <div class="cards-grid" id="active-cards-grid"></div>
     </section>
 
     <!-- ── HAND CARDS ─────────────────────────────── -->
     <section class="sheet-section">
-      <div class="section-header">
+      <div class="section-header" id="hand-section-header">
         Hand
-        <span class="slot-count" id="hand-slot-count"></span>
       </div>
       <div class="cards-grid" id="hand-cards-grid"></div>
     </section>
@@ -240,6 +240,7 @@
     <div class="rest-overlay-card">
       <div class="rest-overlay-spinner"></div>
       <p class="rest-overlay-label" id="rest-overlay-label">Resting…</p>
+      <p class="rest-overlay-sub">Please wait…</p>
       <button class="btn rest-overlay-cancel" id="rest-overlay-cancel">Cancel</button>
     </div>
   </div>
