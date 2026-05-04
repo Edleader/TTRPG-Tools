@@ -59,8 +59,13 @@ async function githubRequest(repoPath, method, body = null) {
  * @throws {Error} if the file does not exist or the request fails
  */
 export async function readFile(path) {
-  const data    = await githubRequest(path, 'GET');
-  const content = atob(data.content.replace(/\n/g, ''));
+  const data = await githubRequest(path, 'GET');
+  // GitHub returns base64-encoded content. atob() only handles Latin-1, so we
+  // decode via Uint8Array → TextDecoder to correctly handle UTF-8 characters
+  // (em-dashes, curly quotes, accented characters, etc.)
+  const binary = atob(data.content.replace(/\n/g, ''));
+  const bytes  = Uint8Array.from(binary, c => c.charCodeAt(0));
+  const content = new TextDecoder('utf-8').decode(bytes);
   return { content, sha: data.sha };
 }
 

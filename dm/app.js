@@ -1512,12 +1512,6 @@ async function init() {
     return;
   }
 
-  // If there's only one campaign, load it directly without the selection screen
-  if (state.campaigns.length === 1) {
-    await loadCampaign(state.campaigns[0]);
-    return;
-  }
-
   showCampaignSelect(state.campaigns);
 }
 
