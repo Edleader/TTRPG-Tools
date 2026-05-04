@@ -274,9 +274,7 @@ function loadCharacter() {
 function renderHeader() {
   const fm = state.fm;
   document.getElementById('char-name').textContent = fm.name || '';
-  document.getElementById('char-sub').textContent  =
-    [fm.player ? `Player: ${fm.player}` : '', fm.level ? `Level ${fm.level}` : '']
-      .filter(Boolean).join(' · ');
+  document.getElementById('char-sub').textContent  = fm.level ? `Level ${fm.level}` : '';
   document.getElementById('stat-might').textContent   = fm.might   || '–';
   document.getElementById('stat-finesse').textContent = fm.finesse || '–';
   document.getElementById('stat-mind').textContent    = fm.mind    || '–';
@@ -614,13 +612,20 @@ function subscribeFirebase() {
     const data = snapshot.val() || {};
 
     // Session active?
-    const prevActive    = state.sessionActive;
     state.sessionActive = data.session_active === true;
     document.getElementById('session-banner').style.display =
       state.sessionActive ? 'none' : '';
 
+    // Live HP sync — update display if another tab/device changed HP
+    const playerData   = (data.session || {})[state.characterSlug] || {};
+    const remoteHp     = playerData.hp_current;
+    if (typeof remoteHp === 'number' && remoteHp !== state.currentHp) {
+      state.currentHp = Math.max(0, Math.min(state.maxHp, remoteHp));
+      renderHp();
+      // Don't push back to Firebase — we just received this value
+    }
+
     // Rest approval?
-    const playerData = (data.session || {})[state.characterSlug] || {};
     const restReq    = playerData.rest_request;
     if (restReq && restReq.status === 'approved') {
       // Clear the request from Firebase then apply effects silently
@@ -656,6 +661,7 @@ function logout() {
   document.getElementById('select-character').innerHTML                 = '<option value="">— choose campaign first —</option>';
   document.getElementById('select-character').disabled                  = true;
   document.getElementById('char-loading-spinner').style.display         = 'none';
+  document.getElementById('btn-confirm-character').style.display        = 'none';
   resetPinEntry();
   showScreen('login-screen');
 }
@@ -700,13 +706,21 @@ document.addEventListener('DOMContentLoaded', () => {
     const selChar = document.getElementById('select-character');
     selChar.disabled  = true;
     selChar.innerHTML = '<option value="">— choose campaign first —</option>';
+    document.getElementById('btn-confirm-character').style.display = 'none';
     if (id) onCampaignSelected(id);
   });
 
-  // Character select
+  // Character select — show Continue button when a name is chosen.
+  // We don't proceed immediately because iOS fires 'change' on every scroll
+  // step in the native wheel picker; the button acts as the confirmation.
   document.getElementById('select-character').addEventListener('change', (e) => {
-    const slug = e.target.value;
-    document.getElementById('login-step-pin').style.display = slug ? '' : 'none';
+    const confirmBtn = document.getElementById('btn-confirm-character');
+    confirmBtn.style.display = e.target.value ? '' : 'none';
+    document.getElementById('login-step-pin').style.display = 'none';
+  });
+
+  document.getElementById('btn-confirm-character').addEventListener('click', () => {
+    const slug = document.getElementById('select-character').value;
     if (slug) onCharacterSelected(slug);
   });
 

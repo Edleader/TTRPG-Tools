@@ -130,6 +130,11 @@ html, body {
   cursor:  not-allowed;
 }
 
+.char-confirm-btn {
+  width:      100%;
+  margin-top: 0.5rem;
+}
+
 .login-label {
   display:     flex;
   align-items: center;
@@ -216,18 +221,18 @@ html, body {
 
 /* ── Header ────────────────────────────────────────────────── */
 .sheet-header {
-  display:         flex;
-  align-items:     center;
-  justify-content: space-between;
-  padding:         0.85rem 1rem 0.7rem;
-  background:      var(--surface);
-  border-bottom:   1px solid var(--border);
-  gap:             0.75rem;
-  flex-wrap:       wrap;
+  display:     flex;
+  align-items: center;
+  padding:     0.85rem 1rem 0.7rem;
+  background:  var(--surface);
+  border-bottom: 1px solid var(--border);
+  gap:         0.85rem;
+  flex-wrap:   wrap;
 }
 
+/* Name sits left, stats follow immediately after */
 .header-name-block {
-  flex: 1;
+  /* no flex:1 — it just takes its natural width */
 }
 
 .char-name {
@@ -242,9 +247,9 @@ html, body {
 }
 
 .header-stats-block {
-  display:   flex;
-  gap:       0.5rem;
-  flex-wrap: wrap;
+  display:    flex;
+  gap:        0.5rem;
+  flex-wrap:  wrap;
   flex-shrink: 0;
 }
 
