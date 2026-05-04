@@ -688,29 +688,34 @@ function onLootSessionUpdate(session) {
 
   state.groupLootSession = session;
 
-  const allCards   = Object.entries(session.cards).map(([key, c]) => ({ key, ...c }));
-  const myCards    = allCards.filter(c => c.assignTo === state.characterSlug && !c.claimedBy);
-  const groupCards = allCards.filter(c => (c.assignTo === 'group' || c.forceGroup) && !c.claimedBy);
+  const allCards    = Object.entries(session.cards).map(([key, c]) => ({ key, ...c }));
+  // My unclaimed personal cards
+  const myCards     = allCards.filter(c => c.assignTo === state.characterSlug && !c.claimedBy);
+  // ALL group cards (claimed + unclaimed) for display; unclaimed only for phase logic
+  const groupCards  = allCards.filter(c => c.assignTo === 'group' || c.forceGroup);
+  const unclaimedGroup = groupCards.filter(c => !c.claimedBy);
+  // Any personal card still unclaimed by anyone (not just me)
+  const anyPersonalPending = allCards.some(c => c.assignTo !== 'group' && !c.forceGroup && !c.claimedBy);
 
   const arrangeOpen = document.getElementById('arrange-overlay').style.display !== 'none';
   const groupOpen   = document.getElementById('group-loot-overlay').style.display !== 'none';
 
-  // Phase 1: player-specific cards — open Arrange UI if space needed, else auto-deliver
+  // Phase 1: my personal cards
   if (myCards.length > 0 && !arrangeOpen) {
     tryDeliverMyCards(myCards);
   }
 
-  // Phase 2: group cards — once all player cards resolved
-  if (myCards.length === 0 && groupCards.length > 0) {
+  // Phase 2: group cards — only once all personal cards across all players are resolved
+  if (!anyPersonalPending && groupCards.length > 0) {
     if (groupOpen) {
-      refreshGroupLootCards(allCards); // update claim status in-place
+      refreshGroupLootCards(allCards);
     } else if (!arrangeOpen) {
       showGroupLoot(groupCards);
     }
   }
 
-  // Check if all cards are now resolved — show "all done" message
-  if (myCards.length === 0 && groupCards.length === 0 && !arrangeOpen) {
+  // All cards resolved
+  if (!anyPersonalPending && unclaimedGroup.length === 0 && !arrangeOpen) {
     const anyUnclaimed = allCards.some(c => !c.claimedBy);
     if (!anyUnclaimed && allCards.length > 0) {
       showAllLootResolved();
@@ -800,8 +805,24 @@ function showAllLootResolved() {
  * @param {string} playerSlot - 'hand' or 'active'
  */
 async function deliverCardToPlayer(card, slug, playerSlot) {
-  const filename = card.cardPath.split('/').pop();
-  const destPath = `${state.campaignPath}/players/${slug}/cards/${filename}`;
+  const baseFilename = card.cardPath.split('/').pop();
+  const baseName     = baseFilename.replace(/\.md$/, '');
+  const cardsDir     = `${state.campaignPath}/players/${slug}/cards`;
+
+  // If a file with this name already exists, append a numeric suffix
+  let filename = baseFilename;
+  let destPath = `${cardsDir}/${filename}`;
+  try {
+    const existing = await listDirectory(cardsDir);
+    const names    = existing.map(e => e.name);
+    if (names.includes(filename)) {
+      let i = 2;
+      while (names.includes(`${baseName}-${i}.md`)) i++;
+      filename = `${baseName}-${i}.md`;
+      destPath = `${cardsDir}/${filename}`;
+    }
+  } catch (_) { /* cardsDir doesn't exist yet — first card */ }
+
   try {
     await copyFile(card.cardPath, destPath, `Give ${card.name} to ${slug}`, { player_slot: playerSlot });
     const cardRef = ref(db, `${firebaseLootPath(state.campaignId)}/cards/${card.key}`);
@@ -825,14 +846,18 @@ async function sendNotifyCardsToGroup() {
 
 // ─── Group loot screen ─────────────────────────────────────────────────────────
 
-const GROUP_LOOT_LOCK_SECONDS = 10;
+const GROUP_LOOT_LOCK_MS = 3000;
+
+// Whether the initial 3s lock has passed for this group loot session
+let _groupLootUnlocked = false;
 
 /**
- * Shows the group loot overlay. The claim button is locked for 10 seconds.
+ * Shows the group loot overlay. Cards show left-to-right; claim lock is 3s
+ * with no countdown shown — button just activates after the timer.
  *
- * @param {Array} cards - Unclaimed group cards from Firebase
+ * @param {Array} allCards - All group cards from Firebase (claimed + unclaimed)
  */
-function showGroupLoot(cards) {
+function showGroupLoot(allCards) {
   const overlay    = document.getElementById('group-loot-overlay');
   const title      = document.getElementById('group-loot-title');
   const sub        = document.getElementById('group-loot-sub');
@@ -840,93 +865,122 @@ function showGroupLoot(cards) {
   const closeBtn   = document.getElementById('btn-group-loot-close');
 
   title.textContent        = 'Group Loot';
-  sub.textContent          = 'Your group has loot to claim. Work together to decide who takes what.';
+  sub.textContent          = 'Work together to decide who takes what. Claim from left to right.';
   abandonBtn.style.display = '';
   closeBtn.style.display   = 'none';
   overlay.style.display    = '';
 
-  renderGroupLootCards(cards);
+  _groupLootUnlocked = false;
+  renderGroupLootCards(allCards);
+
+  // Single 3s lock on open — no countdown text
+  setTimeout(() => {
+    _groupLootUnlocked = true;
+    updateGroupClaimButtons();
+  }, GROUP_LOOT_LOCK_MS);
 }
 
 /**
- * Rebuilds the group loot card tiles (called on Firebase updates).
+ * Updates claim button states based on lock and claimed status.
+ * Only the leftmost unclaimed card gets an active Claim button.
+ */
+function updateGroupClaimButtons() {
+  const container  = document.getElementById('group-loot-cards');
+  const tiles      = Array.from(container.querySelectorAll('.group-loot-card-tile:not(.group-loot-claimed-tile)'));
+  // Find the first tile that hasn't been claimed
+  let firstActive = true;
+  for (const tile of tiles) {
+    const claimBtn = tile.querySelector('.group-claim-btn');
+    if (!claimBtn) continue;
+    if (_groupLootUnlocked && firstActive) {
+      claimBtn.disabled = false;
+      firstActive = false;
+    } else {
+      claimBtn.disabled = true;
+    }
+  }
+}
+
+/**
+ * Rebuilds the group loot card tiles (called on Firebase updates while overlay is open).
  *
  * @param {Array} allCards - All cards from the session (claimed + unclaimed)
  */
 function refreshGroupLootCards(allCards) {
-  const unclaimed = allCards.filter(c => (c.assignTo === 'group' || c.forceGroup) && !c.claimedBy);
-  renderGroupLootCards(unclaimed);
+  const groupCards = allCards.filter(c => c.assignTo === 'group' || c.forceGroup);
+  renderGroupLootCards(groupCards);
 }
 
 /**
- * Renders the horizontal row of group loot card tiles.
- * Claim button locked for GROUP_LOOT_LOCK_SECONDS, then becomes available.
- * Clicking Claim asks for hand/active choice, then checks space.
+ * Renders all group loot cards — claimed ones greyed out, unclaimed interactive.
+ * Cards stay in order; claimed ones remain visible so players can see what went where.
  *
- * @param {Array} cards
+ * @param {Array} cards - Group cards (claimed + unclaimed)
  */
 function renderGroupLootCards(cards) {
   const container = document.getElementById('group-loot-cards');
   container.innerHTML = '';
 
   if (cards.length === 0) {
-    container.innerHTML = '<p class="group-loot-empty">No cards remaining.</p>';
+    container.innerHTML = '<p class="group-loot-empty">No group loot.</p>';
     return;
   }
 
   for (const card of cards) {
     const div = document.createElement('div');
-    div.className   = 'group-loot-card-tile';
     div.dataset.key = card.key;
 
-    const intendedLabel = (card.forceGroup && card.assignTo && card.assignTo !== 'group')
-      ? `<div class="group-loot-intended">Intended for ${escapeHtml(card.assignTo)}</div>`
-      : '';
-
-    div.innerHTML = `
-      ${intendedLabel}
-      <div class="group-loot-tile-type">${escapeHtml(card.card_type || '')}</div>
-      <div class="group-loot-tile-name">${escapeHtml(card.name)}</div>
-      <div class="group-loot-tile-slot">Slot: ${escapeHtml(card.slots || 'hand')}</div>
-      <div class="group-loot-slot-choice" id="slot-choice-${escapeHtml(card.key)}" style="display:none">
-        <button class="btn btn-sm" data-key="${escapeHtml(card.key)}" data-slot="hand">Hand</button>
-        ${card.slots === 'active' ? `<button class="btn btn-secondary btn-sm" data-key="${escapeHtml(card.key)}" data-slot="active">Active</button>` : ''}
-      </div>
-      <button class="btn btn-sm group-claim-btn" id="claim-btn-${escapeHtml(card.key)}"
-        data-key="${escapeHtml(card.key)}" disabled>
-        Claim (${GROUP_LOOT_LOCK_SECONDS}s)
-      </button>
-    `;
+    if (card.claimedBy) {
+      div.className = 'group-loot-card-tile group-loot-claimed-tile';
+      div.innerHTML = `
+        <div class="group-loot-tile-type">${escapeHtml(card.card_type || '')}</div>
+        <div class="group-loot-tile-name">${escapeHtml(card.name)}</div>
+        <div class="group-loot-claimed">Claimed by ${escapeHtml(card.claimedBy)}</div>
+      `;
+    } else {
+      div.className = 'group-loot-card-tile';
+      const intendedLabel = (card.forceGroup && card.assignTo && card.assignTo !== 'group')
+        ? `<div class="group-loot-intended">Intended for ${escapeHtml(card.assignTo)}</div>`
+        : '';
+      div.innerHTML = `
+        ${intendedLabel}
+        <div class="group-loot-tile-type">${escapeHtml(card.card_type || '')}</div>
+        <div class="group-loot-tile-name">${escapeHtml(card.name)}</div>
+        <div class="group-loot-tile-slot">Slot: ${escapeHtml(card.slots || 'hand')}</div>
+        <div class="group-loot-slot-choice" id="slot-choice-${escapeHtml(card.key)}" style="display:none">
+          <button class="btn btn-sm" data-key="${escapeHtml(card.key)}" data-slot="hand">Hand</button>
+          ${card.slots === 'active' ? `<button class="btn btn-secondary btn-sm" data-key="${escapeHtml(card.key)}" data-slot="active">Active</button>` : ''}
+        </div>
+        <button class="btn btn-sm group-claim-btn" id="claim-btn-${escapeHtml(card.key)}"
+          data-key="${escapeHtml(card.key)}" disabled>
+          Claim
+        </button>
+      `;
+    }
     container.appendChild(div);
   }
 
-  // Countdown to unlock claim buttons
-  let remaining = GROUP_LOOT_LOCK_SECONDS;
-  const timer = setInterval(() => {
-    remaining--;
-    container.querySelectorAll('.group-claim-btn').forEach(btn => {
-      if (remaining <= 0) { btn.disabled = false; btn.textContent = 'Claim'; }
-      else { btn.textContent = `Claim (${remaining}s)`; }
-    });
-    if (remaining <= 0) clearInterval(timer);
-  }, 1000);
+  // Apply button active states
+  updateGroupClaimButtons();
 
-  // Wire clicks via delegation
-  container.addEventListener('click', (e) => {
-    // Claim button — show slot choice
-    const claimBtn = e.target.closest('.group-claim-btn:not([disabled])');
-    if (claimBtn) {
-      const key = claimBtn.dataset.key;
-      claimBtn.style.display = 'none';
-      document.getElementById(`slot-choice-${key}`).style.display = '';
-      return;
-    }
-    // Slot choice button
-    const slotBtn = e.target.closest('.group-loot-slot-choice [data-slot]');
-    if (slotBtn) {
-      claimGroupCard(slotBtn.dataset.key, slotBtn.dataset.slot);
-    }
-  });
+  // Wire delegation only once — guard against re-adding
+  if (!container.dataset.wired) {
+    container.dataset.wired = '1';
+    container.addEventListener('click', (e) => {
+      const claimBtn = e.target.closest('.group-claim-btn:not([disabled])');
+      if (claimBtn) {
+        const key = claimBtn.dataset.key;
+        claimBtn.style.display = 'none';
+        const choice = document.getElementById(`slot-choice-${key}`);
+        if (choice) choice.style.display = '';
+        return;
+      }
+      const slotBtn = e.target.closest('.group-loot-slot-choice [data-slot]');
+      if (slotBtn) {
+        claimGroupCard(slotBtn.dataset.key, slotBtn.dataset.slot);
+      }
+    });
+  }
 }
 
 /**
@@ -942,13 +996,19 @@ async function claimGroupCard(key, slotChoice) {
 
   let cardData;
   try {
+    // Read first so the transaction sees a definite value (avoids false null abort on first run)
+    const snap = await get(cardRef);
+    const existing = snap.val();
+    if (!existing) { alert('Card no longer available.'); return; }
+    if (existing.claimedBy) { alert('Sorry — someone else just claimed that card!'); return; }
+
     const result = await runTransaction(cardRef, (current) => {
       if (!current || current.claimedBy) return; // abort — already taken
       return { ...current, claimedBy: state.characterSlug, resolvedAt: Date.now() };
     });
 
     if (!result.committed) {
-      alert('Sorry — someone else claimed that card just before you!');
+      alert('Sorry — someone else claimed that card at the same moment!');
       return;
     }
     cardData = result.snapshot.val();
@@ -957,21 +1017,25 @@ async function claimGroupCard(key, slotChoice) {
     return;
   }
 
-  // Check if we have space in the chosen slot
-  const fm       = state.fm;
-  const maxSlots = slotChoice === 'active' ? (fm.active_slots || 4) : (fm.hand_slots || 4);
-  const curCount = slotChoice === 'active'
-    ? (state._activeCards || []).length
-    : (state._handCards   || []).length;
-
   const incomingCard = { ...cardData, key };
+  const fm           = state.fm;
+  const maxActive    = fm.active_slots || 4;
+  const maxHand      = fm.hand_slots   || 4;
+  const curActive    = (state._activeCards || []).length;
+  const curHand      = (state._handCards   || []).length;
 
-  if (curCount < maxSlots) {
-    // Space available — deliver directly
-    await deliverCardToPlayer(incomingCard, state.characterSlug, slotChoice);
+  // Determine if there is any space at all
+  const hasSpace = curActive < maxActive || curHand < maxHand;
+
+  if (hasSpace) {
+    // Pick the best slot: prefer the chosen one, fall back to the other
+    let actualSlot = slotChoice;
+    if (slotChoice === 'active' && curActive >= maxActive) actualSlot = 'hand';
+    if (slotChoice === 'hand'   && curHand   >= maxHand)   actualSlot = 'active';
+    await deliverCardToPlayer(incomingCard, state.characterSlug, actualSlot);
     await loadAndRenderCards();
   } else {
-    // No space — open Arrange UI with this card as incoming
+    // No space at all — go straight to Arrange UI
     state.lootNotifyCards = [incomingCard];
     openArrangeOverlay({ incoming: [incomingCard], context: 'loot-group', preferredSlot: slotChoice });
   }
@@ -983,6 +1047,11 @@ async function claimGroupCard(key, slotChoice) {
 function closeGroupLoot() {
   clearInterval(state._resolvedTimer);
   document.getElementById('group-loot-overlay').style.display = 'none';
+  // Reset the cards container so the next session wires delegation afresh
+  const container = document.getElementById('group-loot-cards');
+  container.innerHTML = '';
+  delete container.dataset.wired;
+  _groupLootUnlocked     = false;
   state.groupLootSession = null;
 }
 
@@ -1086,27 +1155,32 @@ function renderArrangeZone(zoneId, cards, readOnly) {
 
   for (const card of cards) {
     const tile = document.createElement('div');
+    // Use filename as the unique key to handle duplicate card names
+    const cardId = card._path
+      ? card._path.split('/').pop()
+      : (card.cardPath ? card.cardPath.split('/').pop() : card.name + '_' + Math.random());
     tile.className      = 'arrange-card-tile card-type-' + (card.card_type || 'item').toLowerCase();
-    tile.dataset.cardId = card._path || card.cardPath || card.name; // unique-ish key
+    tile.dataset.cardId = cardId;
 
     if (readOnly) {
       tile.classList.add('arrange-card-incoming');
       tile.innerHTML = `
-        <div class="arrange-card-type">${escapeHtml(card.card_type || '')}</div>
-        <div class="arrange-card-name">${escapeHtml(card.name || '')}</div>
-        <div class="arrange-card-slot">Needs: ${escapeHtml(card.slots || 'hand')}</div>
+        <div class="arrange-card-body">
+          <div class="arrange-card-type">${escapeHtml(card.card_type || '')}</div>
+          <div class="arrange-card-name">${escapeHtml(card.name || '')}</div>
+          <div class="arrange-card-slot">Needs: ${escapeHtml(card.slots || 'hand')}</div>
+        </div>
       `;
     } else {
       tile.innerHTML = `
-        <div class="arrange-drag-handle" title="Drag to move">&#9776;</div>
-        <div class="arrange-card-type">${escapeHtml(card.card_type || '')}</div>
-        <div class="arrange-card-name">${escapeHtml(card.name || '')}</div>
-        <div class="arrange-card-slot">${escapeHtml(card.slots || 'hand')}</div>
+        <div class="arrange-drag-handle" title="Drag to move">&#8942;&#8942;&#8942;</div>
+        <div class="arrange-card-body">
+          <div class="arrange-card-type">${escapeHtml(card.card_type || '')}</div>
+          <div class="arrange-card-name">${escapeHtml(card.name || '')}</div>
+          <div class="arrange-card-slot">${escapeHtml(card.player_slot || card.slots || 'hand')}</div>
+        </div>
       `;
-      // Tap on the card body (not handle) to open detail modal
       tile.querySelector('.arrange-card-name').addEventListener('click', () => openCardModal(card));
-
-      // Drag via the handle using the validated DOM-move pattern
       tile.querySelector('.arrange-drag-handle').addEventListener('pointerdown', (e) => {
         arrangeDragStart(e, tile, card);
       });
@@ -1219,35 +1293,62 @@ function arrangeDragEnd(e) {
   _arrangeDrag.ghost = null;
   _arrangeDrag.sourceEl.classList.remove('arrange-drag-source');
 
-  // Sync _arrange arrays from the current DOM state of each zone
+  document.removeEventListener('pointermove', arrangeDragMove, { capture: true });
+  document.removeEventListener('pointerup',   arrangeDragEnd,  { capture: true });
+
+  // Sync _arrange arrays from the current DOM positions — cards stay in the DOM,
+  // we just rebuild the logical arrays to reflect where they ended up.
+  const allCards = [..._arrange.active, ..._arrange.hand, ..._arrange.discard];
   const zones = ['active', 'hand', 'discard'];
   for (const zoneName of zones) {
     const zoneEl = document.getElementById(`arrange-${zoneName}-zone`);
     const ids    = Array.from(zoneEl.querySelectorAll('.arrange-card-tile[data-card-id]'))
                        .map(el => el.dataset.cardId);
-
-    // Rebuild the zone array by matching card IDs
-    const allCards = [..._arrange.active, ..._arrange.hand, ..._arrange.discard];
-    _arrange[zoneName] = ids.map(id => allCards.find(c =>
-      (c._path || c.cardPath || c.name) === id
-    )).filter(Boolean);
+    _arrange[zoneName] = ids.map(id => allCards.find(c => {
+      const cid = c._path ? c._path.split('/').pop() : (c.cardPath ? c.cardPath.split('/').pop() : null);
+      return cid === id;
+    })).filter(Boolean);
   }
 
-  // Validate rules: only slots:active cards can be in the active zone
+  // Validate: only slots:active cards can be in the active zone
   const invalidInActive = _arrange.active.filter(c => (c.slots || '').toLowerCase() !== 'active');
   if (invalidInActive.length > 0) {
-    // Move the offending cards back to hand automatically
     for (const c of invalidInActive) {
       _arrange.active = _arrange.active.filter(x => x !== c);
       _arrange.hand.push(c);
     }
+    // Re-render all zones since we need to move cards back
+    renderArrangeZones();
     showArrangeValidation(`Only active-type cards can go in the Active section. "${invalidInActive.map(c => c.name).join('", "')}" moved to Hand.`);
+    return;
   }
 
-  renderArrangeZones();
+  // No rule violations — just update headers and validate counts without re-rendering
+  const fm        = state.fm;
+  const maxActive = fm.active_slots || 4;
+  const maxHand   = fm.hand_slots   || 4;
+  document.getElementById('arrange-active-header').textContent =
+    `Active Slots (${_arrange.active.length} / ${maxActive})`;
+  document.getElementById('arrange-hand-header').textContent =
+    `Hand (${_arrange.hand.length} / ${maxHand})`;
 
-  document.removeEventListener('pointermove', arrangeDragMove, { capture: true });
-  document.removeEventListener('pointerup',   arrangeDragEnd,  { capture: true });
+  // Show/hide "Empty" placeholders in each zone
+  const zoneNames = ['active', 'hand', 'discard'];
+  for (const zoneName of zoneNames) {
+    const zoneEl  = document.getElementById(`arrange-${zoneName}-zone`);
+    const hasTiles = zoneEl.querySelector('.arrange-card-tile');
+    let emptyEl    = zoneEl.querySelector('.arrange-empty');
+    if (!hasTiles && !emptyEl) {
+      emptyEl = document.createElement('div');
+      emptyEl.className   = 'arrange-empty';
+      emptyEl.textContent = 'Empty';
+      zoneEl.appendChild(emptyEl);
+    } else if (hasTiles && emptyEl) {
+      emptyEl.remove();
+    }
+  }
+
+  validateArrange();
 }
 
 // ─── Arrange validation ───────────────────────────────────────────────────────

@@ -654,8 +654,11 @@ function isArcOrChapterFile(fileObj) {
  * @returns {boolean}
  */
 function isPlayerFile(fileObj) {
-  return fileObj.frontmatter.type === 'player' ||
-    fileObj.path.includes('/players/') && fileObj.path.endsWith('.md');
+  // Must have type === 'player' in frontmatter, OR be the root player .md
+  // (slug/slug.md directly inside /players/), never a card file nested deeper.
+  if (fileObj.frontmatter.type === 'player') return true;
+  const match = fileObj.path.match(/\/players\/([^/]+)\/\1\.md$/);
+  return !!match;
 }
 
 // =====================================================
