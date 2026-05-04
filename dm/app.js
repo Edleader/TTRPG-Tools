@@ -1458,13 +1458,11 @@ function hideAbilityTooltip() {
 // =====================================================
 
 const _drag = {
-  active:     false,
-  sourceId:   null,  // numeric id of the card being dragged
-  sourceEl:   null,  // the actual DOM card element
-  ghost:      null,  // floating clone that follows the pointer
-  offsetX:    0,
-  offsetY:    0,
-  lastOverId: null,  // id of the card we last swapped with (prevents repeat swaps)
+  active:   false,
+  sourceEl: null,  // the actual DOM card element (faded placeholder in the grid)
+  ghost:    null,  // floating clone that follows the pointer
+  offsetX:  0,
+  offsetY:  0,
 };
 
 function hpDragStart(e) {
@@ -1473,19 +1471,16 @@ function hpDragStart(e) {
   if (e.target.closest('button, input')) return;
 
   const card = e.currentTarget;
-  const id   = parseInt(card.dataset.id);
-  if (isNaN(id)) return;
+  if (isNaN(parseInt(card.dataset.id))) return;
 
   e.preventDefault();
 
   const rect = card.getBoundingClientRect();
 
-  _drag.active     = true;
-  _drag.sourceId   = id;
-  _drag.sourceEl   = card;
-  _drag.offsetX    = e.clientX - rect.left;
-  _drag.offsetY    = e.clientY - rect.top;
-  _drag.lastOverId = id;
+  _drag.active   = true;
+  _drag.sourceEl = card;
+  _drag.offsetX  = e.clientX - rect.left;
+  _drag.offsetY  = e.clientY - rect.top;
 
   // Build a floating ghost clone that follows the pointer — never touches the real DOM grid
   const ghost = card.cloneNode(true);
@@ -1510,41 +1505,32 @@ function hpDragMove(e) {
   _drag.ghost.style.left = `${e.clientX - _drag.offsetX}px`;
   _drag.ghost.style.top  = `${e.clientY - _drag.offsetY}px`;
 
-  // Find the closest card (excluding the faded source placeholder)
   const container = document.getElementById('hp-entries');
-  const cards     = Array.from(container.querySelectorAll('.hp-entry:not(.drag-source)'));
 
-  // Use the pointer position directly (more reliable than ghost centre in a 4-col grid)
-  let closestEl = null;
-  let minDist   = Infinity;
-
-  for (const c of cards) {
-    const r    = c.getBoundingClientRect();
-    const cx   = r.left + r.width  / 2;
-    const cy   = r.top  + r.height / 2;
-    const dist = Math.hypot(e.clientX - cx, e.clientY - cy);
-    if (dist < minDist) { minDist = dist; closestEl = c; }
+  // Find which non-source card the pointer is directly over (bounding box hit test)
+  let overEl = null;
+  for (const c of container.querySelectorAll('.hp-entry:not(.drag-source)')) {
+    const r = c.getBoundingClientRect();
+    if (e.clientX >= r.left && e.clientX <= r.right &&
+        e.clientY >= r.top  && e.clientY <= r.bottom) {
+      overEl = c;
+      break;
+    }
   }
 
-  if (!closestEl) return;
+  // Pointer is over empty space or the placeholder itself — don't move anything
+  if (!overEl) return;
 
-  const overId = parseInt(closestEl.dataset.id);
+  // Decide insert position based on which horizontal half of the target card the pointer is in
+  const r   = overEl.getBoundingClientRect();
+  const mid = r.left + r.width / 2;
 
-  // Only act when we've moved to a different target card
-  if (overId === _drag.lastOverId) return;
-  _drag.lastOverId = overId;
-
-  // Move the real source DOM node to the correct position — no re-render, no flicker
-  const sourceEl = _drag.sourceEl;
-  const overRect = closestEl.getBoundingClientRect();
-  const overCY   = overRect.top + overRect.height / 2;
-
-  if (e.clientY < overCY) {
-    // Pointer is in the top half of the target — insert source before it
-    container.insertBefore(sourceEl, closestEl);
+  if (e.clientX < mid) {
+    // Left half — insert the placeholder before this card
+    container.insertBefore(_drag.sourceEl, overEl);
   } else {
-    // Pointer is in the bottom half — insert source after it
-    container.insertBefore(sourceEl, closestEl.nextSibling);
+    // Right half — insert the placeholder after this card
+    container.insertBefore(_drag.sourceEl, overEl.nextSibling);
   }
 }
 
