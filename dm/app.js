@@ -39,54 +39,64 @@ import {
 // =====================================================
 
 const state = {
-  campaigns:      [],      // [{ id, name, path }] — discovered from repo
-  activeCampaign: null,    // { id, name, path }
-  files:          [],      // [{ path, sha, frontmatter, rawContent }] — all .md files for current campaign
-  currentFile:    null,    // Currently open file object
-  editing:        false,   // Main content edit mode active
-  editingDmNotes: false,   // DM notes edit mode active
-  dmNotesFile:    null,    // { path, sha, content } for the current .dm.md file
-  hpEntries:      [],      // [{ id, name, current, max }] — enemy HP tracker
-  nextHpId:       1,
-  playerFiles:    [],      // Subset of files where frontmatter.type === 'player'
+  campaigns:        [],      // [{ id, name, path }] — discovered from repo
+  activeCampaign:   null,    // { id, name, path }
+  files:            [],      // [{ path, sha, frontmatter, rawContent, loaded }] — all .md files
+  currentFile:      null,    // Currently open file object
+  editing:          false,   // Main content edit mode active
+  editingDmNotes:   false,   // DM notes edit mode active
+  dmNotesFile:      null,    // { path, sha, content } for the current .dm.md file
+  hpEntries:        [],      // [{ id, name, current, max }] — enemy HP tracker
+  nextHpId:         1,
+  playerFiles:      [],      // Subset of files where frontmatter.type === 'player'
+  backgroundDone:   false,   // True once background content load is complete
 };
 
 // =====================================================
-// GITHUB READS — load all files for a campaign
+// GITHUB READS — two-phase loading
 // =====================================================
 
 /**
- * Recursively fetches all .md files under a given repo path.
- * Skips .dm.md files (DM notes) and campaign.md (metadata).
- * Returns an array of { path, sha, frontmatter, rawContent }.
+ * PHASE 1 — Fast index load.
+ * Walks the directory tree fetching only listings (no file content).
+ * Creates stub file objects with path and sha but rawContent = null.
+ * Also fetches frontmatter for player files immediately so the player
+ * panel can render without waiting for the background load.
  *
  * @param {string} dirPath - Repo-relative directory path to walk
- * @returns {Promise<Array>}
+ * @returns {Promise<Array>} Array of file stub objects
  */
-async function fetchAllFiles(dirPath) {
-  const files = [];
-  await walkRepoDirectory(dirPath, files);
+async function fetchFileIndex(dirPath) {
+  const stubs = [];
+  await walkRepoDirectoryIndex(dirPath, stubs);
 
-  // Also load rules.md from repo root
+  // Also index rules.md from repo root
   try {
     const { content, sha } = await readFile('rules.md');
     const fm = parseFrontmatter(content);
-    files.push({ path: 'rules.md', sha, frontmatter: fm, rawContent: content });
-  } catch (_) {
-    // No rules.md at root — skip
-  }
+    stubs.push({ path: 'rules.md', sha, frontmatter: fm, rawContent: content, loaded: true });
+  } catch (_) { /* no rules.md — skip */ }
 
-  return files;
+  // Eagerly load player files and the campaign overview so the player panel
+  // and empty state are populated before the background load finishes.
+  await Promise.all(
+    stubs
+      .filter(f => !f.loaded && (isPlayerFile(f) || f.path.endsWith('campaign-overview.md')))
+      .map(f => loadFileContent(f))
+  );
+
+  return stubs;
 }
 
 /**
- * Recursive directory walker for the GitHub API.
- * Fills the provided array in-place.
+ * Recursive directory walker that builds stubs from directory listings only.
+ * All files start with loaded: false and rawContent: null.
+ * Fetches subdirectories in parallel for speed.
  *
  * @param {string} dirPath - Current directory path
- * @param {Array}  results - Array to push file objects into
+ * @param {Array}  results - Array to push stub objects into
  */
-async function walkRepoDirectory(dirPath, results) {
+async function walkRepoDirectoryIndex(dirPath, results) {
   let entries;
   try {
     entries = await listDirectory(dirPath);
@@ -95,24 +105,109 @@ async function walkRepoDirectory(dirPath, results) {
     return;
   }
 
-  for (const entry of entries) {
-    if (entry.type === 'dir') {
-      await walkRepoDirectory(entry.path, results);
-      continue;
-    }
+  // Recurse into subdirectories in parallel
+  const dirs  = entries.filter(e => e.type === 'dir');
+  const files = entries.filter(e =>
+    e.type === 'file' &&
+    e.name.endsWith('.md') &&
+    !e.name.endsWith('.dm.md') &&
+    e.name !== 'campaign.md'
+  );
 
-    if (!entry.name.endsWith('.md'))      continue;  // not markdown
-    if (entry.name.endsWith('.dm.md'))    continue;  // DM notes — loaded separately
-    if (entry.name === 'campaign.md')     continue;  // metadata only
+  await Promise.all(dirs.map(d => walkRepoDirectoryIndex(d.path, results)));
 
-    try {
-      const { content, sha } = await readFile(entry.path);
-      const fm = parseFrontmatter(content);
-      results.push({ path: entry.path, sha, frontmatter: fm, rawContent: content });
-    } catch (e) {
-      console.warn(`Could not read file "${entry.path}":`, e.message);
-    }
+  for (const entry of files) {
+    results.push({
+      path:        entry.path,
+      sha:         entry.sha,
+      frontmatter: inferFrontmatter(entry.path),  // minimal stub from filename
+      rawContent:  null,
+      loaded:      false,
+    });
   }
+}
+
+/**
+ * Infers a minimal frontmatter object from a file path alone.
+ * Used as a placeholder until the real content is loaded.
+ * Enough to build the sidebar and detect player files by path.
+ *
+ * @param {string} path - Repo-relative file path
+ * @returns {object} Minimal frontmatter stub
+ */
+function inferFrontmatter(path) {
+  const name = filenameLabel(path);
+  const fm   = { _body: '', title: name, name };
+  if (path.includes('/players/') && path.endsWith('.md') && !path.includes('/cards/')) {
+    fm.type = 'player';
+  } else if (path.includes('/characters/')) {
+    fm.type = 'character';
+  }
+  return fm;
+}
+
+/**
+ * Loads the full content of a single file stub, updating it in-place.
+ * Called on-demand when a file is opened, and in the background for all others.
+ *
+ * @param {object} fileObj - A stub from the file index
+ * @returns {Promise<void>}
+ */
+async function loadFileContent(fileObj) {
+  if (fileObj.loaded) return;
+  try {
+    const { content, sha } = await readFile(fileObj.path);
+    fileObj.rawContent  = content;
+    fileObj.sha         = sha;
+    fileObj.frontmatter = parseFrontmatter(content);
+    fileObj.loaded      = true;
+  } catch (e) {
+    console.warn(`Could not load content for "${fileObj.path}":`, e.message);
+  }
+}
+
+/**
+ * PHASE 2 — Background content load.
+ * Loads the full content of all unloaded files in parallel batches.
+ * Disables the search bar while running; enables it when done.
+ * Rebuilds the sidebar and player panel once complete so any
+ * frontmatter that differed from the inferred stub is corrected.
+ *
+ * @param {Array} files - The full file index from state.files
+ */
+async function backgroundLoadAllContent(files) {
+  const BATCH_SIZE = 8;  // fetch this many files at once to avoid rate limits
+  const unloaded   = files.filter(f => !f.loaded);
+
+  setSearchEnabled(false);
+
+  for (let i = 0; i < unloaded.length; i += BATCH_SIZE) {
+    const batch = unloaded.slice(i, i + BATCH_SIZE);
+    await Promise.all(batch.map(f => loadFileContent(f)));
+  }
+
+  state.backgroundDone = true;
+  setSearchEnabled(true);
+
+  // Rebuild sidebar and player panel now that real frontmatter is available
+  buildSidebar(state.files);
+  restoreActiveNavItem();
+  renderPlayerPanel(state.files);
+}
+
+/**
+ * Enables or disables the search input.
+ * Shows a tooltip hint when disabled so the user knows why.
+ *
+ * @param {boolean} enabled
+ */
+function setSearchEnabled(enabled) {
+  const input = document.getElementById('search-input');
+  if (!input) return;
+  input.disabled    = !enabled;
+  input.placeholder = enabled
+    ? 'Search files, characters, notes…'
+    : 'Search loading…';
 }
 
 // =====================================================
@@ -455,6 +550,13 @@ async function openFile(fileObj) {
   if (state.editingDmNotes) {
     if (!confirm('You have unsaved DM notes. Discard them?')) return;
     exitDmNotesEdit(false);
+  }
+
+  // If content hasn't been fetched yet, load it now before rendering
+  if (!fileObj.loaded) {
+    showSaveStatus('Loading…');
+    await loadFileContent(fileObj);
+    showSaveStatus('');
   }
 
   state.currentFile = fileObj;
@@ -1253,17 +1355,20 @@ function showCampaignSelect(campaigns) {
  * @param {{ id: string, name: string, path: string }} campaign
  */
 async function loadCampaign(campaign) {
-  state.activeCampaign = campaign;
+  state.activeCampaign  = campaign;
+  state.backgroundDone  = false;
   document.getElementById('campaign-select-screen').style.display = 'none';
   showLoadingScreen(`Loading ${campaign.name}…`);
 
+  // Phase 1 — fast index (directory listings + player file content)
   try {
-    state.files = await fetchAllFiles(campaign.path);
+    state.files = await fetchFileIndex(campaign.path);
   } catch (e) {
     showError('Failed to load campaign files: ' + e.message);
     return;
   }
 
+  // Show the app immediately with what we have
   document.getElementById('loading-screen').style.display = 'none';
   document.getElementById('app').style.display = 'flex';
   document.getElementById('app').classList.add('visible', 'fade-in');
@@ -1281,6 +1386,9 @@ async function loadCampaign(campaign) {
       <p style="font-size:0.78rem;color:var(--text-faint)">${state.files.length} files indexed</p>
     </div>
   `;
+
+  // Phase 2 — load all file content in the background
+  backgroundLoadAllContent(state.files);
 }
 
 // =====================================================
