@@ -1452,58 +1452,66 @@ function confirmAddEnemies() {
 // =====================================================
 
 /**
- * Parses a simple YAML list from a string value in frontmatter.
- * Handles both inline YAML lists and multi-line block lists.
- * Each item must have name and hp fields.
+ * Expands a single encounter's enemies list into flat { name, hp } rows,
+ * honouring the `count` field.
  *
- * @param {*} raw - The raw value from parseFrontmatter for the 'combat' key
- * @returns {Array} [{ name, hp, count }]
+ * @param {Array} enemyList - [{ name, hp, count }]
+ * @returns {Array} [{ name, hp }]
  */
-function parseCombatBlock(raw) {
-  if (!raw) return [];
-  // parseFrontmatter may return it as a string or array depending on YAML structure.
-  // We handle both cases.
-  if (Array.isArray(raw)) {
-    return raw.flatMap(item => {
-      if (typeof item !== 'object') return [];
-      const name  = String(item.name  || '').trim();
-      const hp    = parseInt(item.hp)  || 0;
-      const count = parseInt(item.count) || 1;
-      if (!name || hp < 1) return [];
-      return Array.from({ length: count }, (_, i) => ({
-        name: count > 1 ? `${name} ${i + 1}` : name,
-        hp,
-      }));
-    });
-  }
-  // Fallback: try to parse as a YAML-style string
-  if (typeof raw === 'string') {
-    const entries = [];
-    const re = /[-\s]*name:\s*(.+?)\s*\n\s*hp:\s*(\d+)(?:\s*\n\s*count:\s*(\d+))?/gi;
-    let m;
-    while ((m = re.exec(raw)) !== null) {
-      const name  = m[1].trim();
-      const hp    = parseInt(m[2]);
-      const count = parseInt(m[3]) || 1;
-      for (let i = 0; i < count; i++) {
-        entries.push({ name: count > 1 ? `${name} ${i + 1}` : name, hp });
-      }
-    }
-    return entries;
-  }
-  return [];
+function expandEnemyList(enemyList) {
+  if (!Array.isArray(enemyList)) return [];
+  return enemyList.flatMap(item => {
+    if (typeof item !== 'object') return [];
+    const name  = String(item.name || '').trim();
+    const hp    = parseInt(item.hp) || 0;
+    const count = parseInt(item.count) || 1;
+    if (!name || hp < 1) return [];
+    return Array.from({ length: count }, (_, i) => ({
+      name: count > 1 ? `${name} ${i + 1}` : name,
+      hp,
+    }));
+  });
 }
 
 /**
- * Renders a "Set up combat" button bar into the content view when the open file
- * has a combat frontmatter block.
+ * Parses the `combat` frontmatter value into a list of named encounters.
+ * Supports two formats:
+ *   - Array of encounters: [{ label, enemies: [{name, hp, count}] }, ...]
+ *   - Flat array of enemies (legacy): [{name, hp, count}, ...]
+ *
+ * Returns an array of { label, enemies } objects, always.
+ *
+ * @param {*} raw - The value of frontmatter.combat
+ * @returns {Array} [{ label: string, enemies: [{name, hp}] }]
+ */
+function parseCombatBlock(raw) {
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+
+  // Detect format: if first item has an `enemies` key it's the named-encounter format
+  if (raw[0] && typeof raw[0] === 'object' && raw[0].enemies) {
+    return raw
+      .map(enc => ({
+        label:   String(enc.label || 'Combat').trim(),
+        enemies: expandEnemyList(Array.isArray(enc.enemies) ? enc.enemies : []),
+      }))
+      .filter(enc => enc.enemies.length > 0);
+  }
+
+  // Legacy flat list — wrap in a single unnamed encounter
+  const enemies = expandEnemyList(raw);
+  return enemies.length ? [{ label: 'Set up combat', enemies }] : [];
+}
+
+/**
+ * Renders a "Set up combat" button bar above the content view.
+ * Shows one button per named encounter when the chapter has a combat block.
  */
 function maybeRenderCombatSetup(fileObj) {
   const existing = document.getElementById('combat-setup-bar');
   if (existing) existing.remove();
 
-  const enemies = parseCombatBlock(fileObj.frontmatter.combat);
-  if (!enemies.length) return;
+  const encounters = parseCombatBlock(fileObj.frontmatter.combat);
+  if (!encounters.length) return;
 
   const bar = document.createElement('div');
   bar.id = 'combat-setup-bar';
@@ -1511,15 +1519,16 @@ function maybeRenderCombatSetup(fileObj) {
 
   const label = document.createElement('span');
   label.className = 'combat-setup-label';
-  label.textContent = `Combat: ${enemies.length} enem${enemies.length === 1 ? 'y' : 'ies'} in this chapter`;
-
-  const btn = document.createElement('button');
-  btn.className = 'btn btn-sm';
-  btn.textContent = 'Set up combat';
-  btn.addEventListener('click', () => openAddEnemyModal(enemies));
-
+  label.textContent = 'Combat:';
   bar.appendChild(label);
-  bar.appendChild(btn);
+
+  for (const enc of encounters) {
+    const btn = document.createElement('button');
+    btn.className   = 'btn btn-sm';
+    btn.textContent = enc.label;
+    btn.addEventListener('click', () => openAddEnemyModal(enc.enemies));
+    bar.appendChild(btn);
+  }
 
   // Insert just above the content view
   const contentView = document.getElementById('content-view');

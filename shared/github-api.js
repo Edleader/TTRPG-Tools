@@ -194,68 +194,99 @@ export function parseFrontmatter(raw) {
   result._body    = raw.slice(end + 4).trim();
 
   const lines = yamlBlock.split('\n');
-  let i = 0;
+  parseYamlMapping(lines, 0, 0, result);
+  return result;
+}
+
+/**
+ * Parses a YAML mapping block into `out`, starting at line index `start`
+ * and only consuming lines whose indentation is >= `minIndent`.
+ * Returns the index of the first line that was NOT consumed.
+ */
+function parseYamlMapping(lines, start, minIndent, out) {
+  let i = start;
   while (i < lines.length) {
     const line = lines[i];
+    if (line.trim() === '' || line.trim().startsWith('#')) { i++; continue; }
+
+    const indent = line.search(/\S/);
+    if (indent < minIndent) break;  // dedented — caller handles it
+
     const colon = line.indexOf(':');
     if (colon === -1) { i++; continue; }
 
-    const key = line.slice(0, colon).trim();
-    let val   = line.slice(colon + 1).trim();
+    const key = line.slice(indent, colon).trim();
+    let   val = line.slice(colon + 1).trim();
 
     if (!key) { i++; continue; }
 
-    // Check if this is a block sequence key (val is empty and next line starts with '  -')
-    if (val === '' && i + 1 < lines.length && /^\s+-\s/.test(lines[i + 1])) {
-      // Collect all indented list items until we hit a non-indented line
-      const items = [];
-      let obj = null;
-      i++;
-      while (i < lines.length && /^\s/.test(lines[i])) {
-        const itemLine = lines[i];
-        const listMatch = itemLine.match(/^\s+-\s*(.*)/);
-        if (listMatch) {
-          if (obj !== null) items.push(obj);
-          obj = {};
-          const propStr = listMatch[1].trim();
-          // May have inline key: value on the same line as the dash
-          if (propStr) {
-            const pc = propStr.indexOf(':');
-            if (pc > -1) {
-              const pk = propStr.slice(0, pc).trim();
-              const pv = coerceYamlValue(propStr.slice(pc + 1).trim());
-              if (pk) obj[pk] = pv;
-            }
-          }
-        } else if (obj !== null) {
-          // Continuation of current object
-          const pc = itemLine.indexOf(':');
-          if (pc > -1) {
-            const pk = itemLine.slice(0, pc).trim();
-            const pv = coerceYamlValue(itemLine.slice(pc + 1).trim());
-            if (pk) obj[pk] = pv;
-          }
-        }
-        i++;
-      }
-      if (obj !== null) items.push(obj);
-      result[key] = items;
-      continue;
-    }
+    // Peek ahead: is the next non-empty indented line a list item?
+    let nextContentIdx = i + 1;
+    while (nextContentIdx < lines.length && lines[nextContentIdx].trim() === '') nextContentIdx++;
 
-    // Scalar value
-    if ((val.startsWith('"') && val.endsWith('"')) ||
-        (val.startsWith("'") && val.endsWith("'"))) {
-      val = val.slice(1, -1);
+    const nextLine = nextContentIdx < lines.length ? lines[nextContentIdx] : '';
+    const nextIndent = nextLine.search(/\S/);
+
+    if (val === '' && nextIndent > indent && /^\s*-\s/.test(nextLine)) {
+      // Block sequence — parse into array
+      const arr = [];
+      i = parseYamlSequence(lines, nextContentIdx, nextIndent, arr);
+      out[key] = arr;
+    } else if (val === '' && nextIndent > indent) {
+      // Nested mapping — recurse
+      const nested = {};
+      i = parseYamlMapping(lines, nextContentIdx, nextIndent, nested);
+      out[key] = nested;
     } else {
-      val = coerceYamlValue(val);
+      out[key] = coerceYamlValue(val);
+      i++;
     }
-
-    result[key] = val;
-    i++;
   }
+  return i;
+}
 
-  return result;
+/**
+ * Parses a YAML block sequence into `out` array.
+ * Each '- ' item may be a scalar or a nested mapping.
+ */
+function parseYamlSequence(lines, start, minIndent, out) {
+  let i = start;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (line.trim() === '' || line.trim().startsWith('#')) { i++; continue; }
+
+    const indent = line.search(/\S/);
+    if (indent < minIndent) break;
+
+    const listMatch = line.match(/^(\s*)-\s*(.*)/);
+    if (!listMatch) break;
+
+    const itemIndent = listMatch[1].length;
+    if (itemIndent < minIndent) break;
+
+    const rest = listMatch[2].trim();
+    i++;
+
+    if (rest === '') {
+      // Empty dash — treat as empty object, look ahead for nested props
+      const obj = {};
+      i = parseYamlMapping(lines, i, itemIndent + 2, obj);
+      out.push(obj);
+    } else if (rest.includes(':')) {
+      // Inline key: value on same line as dash, then possibly more props below
+      const obj = {};
+      const pc = rest.indexOf(':');
+      const pk = rest.slice(0, pc).trim();
+      const pv = coerceYamlValue(rest.slice(pc + 1).trim());
+      if (pk) obj[pk] = pv;
+      // Collect any continuation lines that are more indented than the dash
+      i = parseYamlMapping(lines, i, itemIndent + 2, obj);
+      out.push(obj);
+    } else {
+      out.push(coerceYamlValue(rest));
+    }
+  }
+  return i;
 }
 
 function coerceYamlValue(val) {

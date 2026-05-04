@@ -7,15 +7,19 @@ status: complete
 session_date: 2026-05-02
 players_level: 1
 combat:
-  - name: Scavenger
-    hp: 20
-    count: 3
-  - name: Gang Member
-    hp: 20
-    count: 4
-  - name: Gang Leader
-    hp: 25
-    count: 1
+  - label: Outside the Supermarket
+    enemies:
+      - name: Scavenger
+        hp: 20
+        count: 3
+  - label: The Gang (travel home)
+    enemies:
+      - name: Gang Member
+        hp: 20
+        count: 4
+      - name: Gang Leader
+        hp: 25
+        count: 1
 ---
 
 # Arc 1, Chapter 1 — The Supply Run

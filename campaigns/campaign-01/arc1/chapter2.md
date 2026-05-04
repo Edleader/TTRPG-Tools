@@ -5,6 +5,12 @@ chapter: 2
 title: Charlotte / The Fuel Run
 status: in-progress
 players_level: 1
+combat:
+  - label: The Scavengers (fuel station)
+    enemies:
+      - name: Scavenger
+        hp: 15
+        count: 2
 ---
 
 # Arc 1, Chapter 2 — Charlotte / The Fuel Run
