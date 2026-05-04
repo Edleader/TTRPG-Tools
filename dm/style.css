@@ -1266,33 +1266,60 @@ html, body {
 }
 
 .hp-entries {
-  display: flex;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
   padding: 8px 14px;
-  overflow-x: auto;
+  overflow-y: auto;
   flex: 1;
-  align-items: center;
+  align-content: start;
 }
 
 .hp-entries::-webkit-scrollbar {
-  height: 3px;
+  width: 4px;
 }
 
 .hp-entries::-webkit-scrollbar-thumb {
   background: var(--border-light);
 }
 
+/* Drag states */
+.hp-entry.drag-source {
+  opacity: 0.25;
+  pointer-events: none;
+}
+
+.hp-entry.drag-over {
+  outline: 2px dashed var(--accent-dim);
+  outline-offset: 2px;
+}
+
+/* Floating ghost card while dragging */
+.hp-drag-ghost {
+  position: fixed;
+  pointer-events: none;
+  z-index: 9998;
+  opacity: 0.85;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+  border-radius: 4px;
+  background: var(--panel-bg);
+  border: 1px solid var(--accent-dim);
+}
+
 .hp-entry {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  min-width: 200px;
-  max-width: 240px;
   background: var(--panel-bg);
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 6px 8px;
-  flex-shrink: 0;
+  cursor: grab;
+  user-select: none;
+}
+
+.hp-entry:active {
+  cursor: grabbing;
 }
 
 .hp-entry-header {

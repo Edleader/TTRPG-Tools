@@ -1413,6 +1413,11 @@ function renderHpBar() {
     el.addEventListener('mousemove',  moveAbilityTooltip);
     el.addEventListener('mouseleave', hideAbilityTooltip);
   });
+
+  // Wire drag-to-reorder on each card
+  container.querySelectorAll('.hp-entry').forEach(card => {
+    card.addEventListener('pointerdown', hpDragStart);
+  });
 }
 
 let _abilityTooltipEl = null;
@@ -1446,6 +1451,114 @@ function moveAbilityTooltip(e) {
 
 function hideAbilityTooltip() {
   getAbilityTooltip().style.display = 'none';
+}
+
+// =====================================================
+// HP TRACKER — DRAG TO REORDER
+// =====================================================
+
+const _drag = {
+  active:    false,
+  sourceId:  null,   // id of the entry being dragged
+  ghost:     null,   // cloned floating element
+  offsetX:   0,
+  offsetY:   0,
+  overIndex: -1,     // current hover target index in state.hpEntries
+};
+
+function hpDragStart(e) {
+  // Only drag on left-button pointer; ignore clicks on buttons/inputs
+  if (e.button !== undefined && e.button !== 0) return;
+  if (e.target.closest('button, input')) return;
+
+  const card = e.currentTarget;
+  const id   = parseInt(card.dataset.id);
+  if (isNaN(id)) return;
+
+  e.preventDefault();
+
+  const rect = card.getBoundingClientRect();
+  _drag.active    = true;
+  _drag.sourceId  = id;
+  _drag.offsetX   = e.clientX - rect.left;
+  _drag.offsetY   = e.clientY - rect.top;
+  _drag.overIndex = state.hpEntries.findIndex(en => en.id === id);
+
+  // Create ghost — a visual clone that follows the pointer
+  const ghost = card.cloneNode(true);
+  ghost.className = 'hp-entry hp-drag-ghost';
+  ghost.style.width  = `${rect.width}px`;
+  ghost.style.left   = `${rect.left}px`;
+  ghost.style.top    = `${rect.top}px`;
+  document.body.appendChild(ghost);
+  _drag.ghost = ghost;
+
+  // Mark source as faded — renderHpBar will re-apply this after reorders
+  card.classList.add('drag-source');
+
+  // Use document-level capture so we keep receiving events even as cards re-render
+  document.addEventListener('pointermove', hpDragMove, { capture: true });
+  document.addEventListener('pointerup',   hpDragEnd,  { capture: true });
+}
+
+function hpDragMove(e) {
+  if (!_drag.active) return;
+
+  // Move the ghost
+  _drag.ghost.style.left = `${e.clientX - _drag.offsetX}px`;
+  _drag.ghost.style.top  = `${e.clientY - _drag.offsetY}px`;
+
+  // Find which card the ghost centre is hovering over
+  const container = document.getElementById('hp-entries');
+  const cards     = Array.from(container.querySelectorAll('.hp-entry:not(.drag-source)'));
+  const ghostCX   = e.clientX - _drag.offsetX + _drag.ghost.offsetWidth  / 2;
+  const ghostCY   = e.clientY - _drag.offsetY + _drag.ghost.offsetHeight / 2;
+
+  let targetIndex = -1;
+  let minDist     = Infinity;
+
+  cards.forEach((card, visIdx) => {
+    const r    = card.getBoundingClientRect();
+    const cx   = r.left + r.width  / 2;
+    const cy   = r.top  + r.height / 2;
+    const dist = Math.hypot(ghostCX - cx, ghostCY - cy);
+    if (dist < minDist) {
+      minDist     = dist;
+      // Map visual index back to state index (skipping the source)
+      const stateId = parseInt(card.dataset.id);
+      targetIndex   = state.hpEntries.findIndex(en => en.id === stateId);
+    }
+  });
+
+  if (targetIndex !== -1 && targetIndex !== _drag.overIndex) {
+    _drag.overIndex = targetIndex;
+    // Reorder state array in-place so renderHpBar shows the live preview
+    const srcIdx  = state.hpEntries.findIndex(en => en.id === _drag.sourceId);
+    const [entry] = state.hpEntries.splice(srcIdx, 1);
+    state.hpEntries.splice(targetIndex, 0, entry);
+    renderHpBar();
+
+    // Re-attach listeners — renderHpBar rebuilds the DOM
+    const src = container.querySelector(`[data-id="${_drag.sourceId}"]`);
+    if (src) {
+      src.classList.add('drag-source');
+      src.removeEventListener('pointerdown', hpDragStart); // prevent double-attach
+    }
+  }
+}
+
+function hpDragEnd() {
+  if (!_drag.active) return;
+  _drag.active = false;
+
+  if (_drag.ghost) { _drag.ghost.remove(); _drag.ghost = null; }
+
+  // Remove drag-source class
+  const container = document.getElementById('hp-entries');
+  container.querySelectorAll('.drag-source').forEach(el => el.classList.remove('drag-source'));
+
+  document.removeEventListener('pointermove', hpDragMove, { capture: true });
+  document.removeEventListener('pointerup',   hpDragEnd,  { capture: true });
 }
 
 // =====================================================
