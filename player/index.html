@@ -257,6 +257,54 @@
     </div>
   </div>
 
+  <!-- ── LOOT RECEIVED NOTIFICATION ──────────────────
+       Shown when the DM sends cards directly to this player.
+       Auto-closes after 5 seconds or on "Okay".
+       ─────────────────────────────────────────────── -->
+  <div id="loot-notify-overlay" class="loot-notify-overlay" style="display:none" role="dialog" aria-modal="true" aria-label="Loot received">
+    <div class="loot-notify-card">
+      <div class="loot-notify-title">You received loot!</div>
+      <div id="loot-notify-list" class="loot-notify-list"></div>
+
+      <!-- Shown if player needs to discard to make space -->
+      <div id="loot-notify-discard-prompt" class="loot-discard-prompt" style="display:none">
+        <div class="loot-discard-msg" id="loot-notify-discard-msg"></div>
+        <div id="loot-notify-discard-cards" class="loot-discard-cards"></div>
+      </div>
+
+      <div class="loot-notify-actions">
+        <button class="btn btn-sm" id="btn-loot-notify-okay">Okay</button>
+        <button class="btn btn-secondary btn-sm" id="btn-loot-send-to-group" style="display:none">Send to Group</button>
+      </div>
+      <div class="loot-notify-countdown" id="loot-notify-countdown"></div>
+    </div>
+  </div>
+
+  <!-- ── GROUP LOOT SCREEN ─────────────────────────────
+       Shown to all players at once for group decisions.
+       Cards are displayed horizontally, claim button
+       locked for 10 seconds.
+       ─────────────────────────────────────────────── -->
+  <div id="group-loot-overlay" class="loot-notify-overlay" style="display:none" role="dialog" aria-modal="true" aria-label="Group loot">
+    <div class="group-loot-card">
+      <div class="loot-notify-title">Group Loot</div>
+      <p class="group-loot-sub">Your group has loot to claim. Cards are shown below — work together to decide who takes what.</p>
+
+      <!-- Horizontal scrolling row of all group loot cards -->
+      <div id="group-loot-cards" class="group-loot-cards"></div>
+
+      <!-- Discard area — shown while group loot is open so players can free slots -->
+      <div id="group-discard-section" class="group-discard-section">
+        <div class="group-discard-header">Your cards (tap to discard and free a slot)</div>
+        <div id="group-discard-hand-cards" class="loot-discard-cards"></div>
+      </div>
+
+      <div class="group-loot-actions">
+        <button class="btn btn-danger btn-sm" id="btn-group-abandon">Abandon Remaining Loot</button>
+      </div>
+    </div>
+  </div>
+
   <script type="module" src="app.js"></script>
 </body>
 </html>

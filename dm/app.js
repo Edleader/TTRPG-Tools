@@ -28,16 +28,18 @@ import {
   parseFrontmatter,
   serialiseFrontmatter,
   readAllMarkdownFiles,
+  copyFile,
 } from '../shared/github-api.js';
 
 import {
   FIREBASE_CONFIG,
   firebaseCampaignPath,
+  firebaseLootPath,
 } from '../shared/config.js';
 
 import { initializeApp }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getDatabase, ref, onValue, set }
+import { getDatabase, ref, onValue, set, remove }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
 
 const _fbApp = initializeApp(FIREBASE_CONFIG);
@@ -68,6 +70,10 @@ const state = {
   autoApproveRests: false,   // When true, rest requests are approved instantly
   backgroundDone:   false,   // True once background content load is complete
   _fbUnsub:         null,    // Firebase listener unsubscribe
+  _lootFbUnsub:     null,    // Firebase listener for the loot session observer
+  lootLibrary:      [],      // [{ path, fm }] — all cards in the active campaign's card library
+  lootStaged:       [],      // Cards staged in the loot modal: [{ path, fm, assignTo }]
+                             //   assignTo is a player slug or 'group'
 };
 
 // =====================================================
@@ -1961,6 +1967,370 @@ function showLoadingScreen(message) {
 }
 
 // =====================================================
+// DISTRIBUTE LOOT — CARD LIBRARY LOADING
+// =====================================================
+
+/**
+ * Loads all card .md files from the active campaign's cards/ folder (recursive).
+ * Results are cached in state.lootLibrary so subsequent opens are instant.
+ *
+ * @returns {Promise<void>}
+ */
+async function loadLootLibrary() {
+  if (state.lootLibrary.length > 0) return; // already loaded
+  if (!state.activeCampaign) return;
+
+  const cardsRoot = `${state.activeCampaign.path}/cards`;
+  let allFiles = [];
+
+  // Walk the cards directory one level deep (type subfolders: weapons, spells, etc.)
+  try {
+    const topEntries = await listDirectory(cardsRoot);
+    const typeDirs   = topEntries.filter(e => e.type === 'dir');
+    const topFiles   = topEntries.filter(e => e.type === 'file' && e.name.endsWith('.md'));
+
+    // Load files directly in cards/ root (e.g. the old flat ability.md tables — skip these)
+    // Load files in each type subfolder in parallel
+    const subResults = await Promise.all(
+      typeDirs.map(async dir => {
+        try {
+          const entries = await listDirectory(dir.path);
+          return entries.filter(e => e.type === 'file' && e.name.endsWith('.md'));
+        } catch (_) { return []; }
+      })
+    );
+
+    allFiles = subResults.flat().concat(
+      topFiles.filter(f => !['weapons.md','spells.md','armour.md','abilities.md','items.md'].includes(f.name))
+    );
+  } catch (e) {
+    console.warn('Could not load card library:', e.message);
+    return;
+  }
+
+  // Load all card frontmatter in parallel
+  const loaded = await Promise.all(
+    allFiles.map(async entry => {
+      try {
+        const { content } = await readFile(entry.path);
+        const fm = parseFrontmatter(content);
+        return fm.name ? { path: entry.path, fm } : null;
+      } catch (_) { return null; }
+    })
+  );
+
+  state.lootLibrary = loaded.filter(Boolean);
+}
+
+// =====================================================
+// DISTRIBUTE LOOT — MODAL UI
+// =====================================================
+
+/**
+ * Opens the Distribute Loot modal, loads the card library if needed,
+ * and renders the search UI.
+ */
+async function openLootModal() {
+  const modal = document.getElementById('loot-modal');
+  modal.style.display = '';
+  state.lootStaged = [];
+  renderLootStaged();
+  document.getElementById('loot-search-input').value  = '';
+  document.getElementById('loot-filter-type').value   = '';
+  document.getElementById('loot-filter-gen').value    = '';
+  document.getElementById('loot-search-results').innerHTML = '<span class="loot-hint">Loading card library…</span>';
+
+  await loadLootLibrary();
+
+  document.getElementById('loot-search-results').innerHTML = '<span class="loot-hint">Type to search cards.</span>';
+  document.getElementById('loot-search-input').focus();
+}
+
+function closeLootModal() {
+  document.getElementById('loot-modal').style.display = 'none';
+}
+
+/**
+ * Filters state.lootLibrary by the current search text, type, and generation filters,
+ * then renders matching cards as clickable results.
+ */
+function renderLootSearchResults() {
+  const query   = document.getElementById('loot-search-input').value.trim().toLowerCase();
+  const typeVal = document.getElementById('loot-filter-type').value.toLowerCase();
+  const genVal  = document.getElementById('loot-filter-gen').value;
+  const results = document.getElementById('loot-search-results');
+
+  let filtered = state.lootLibrary;
+
+  if (typeVal) {
+    filtered = filtered.filter(c => (c.fm.card_type || '').toLowerCase() === typeVal);
+  }
+  if (genVal) {
+    filtered = filtered.filter(c => String(c.fm.generation) === genVal);
+  }
+  if (query) {
+    filtered = filtered.filter(c =>
+      (c.fm.name || '').toLowerCase().includes(query) ||
+      (c.fm.card_type || '').toLowerCase().includes(query)
+    );
+  }
+
+  results.innerHTML = '';
+
+  if (filtered.length === 0) {
+    results.innerHTML = '<span class="loot-hint">No cards match.</span>';
+    return;
+  }
+
+  // Show up to 20 results to keep the UI fast
+  const shown = filtered.slice(0, 20);
+  for (const card of shown) {
+    const div = document.createElement('div');
+    div.className = 'loot-result-row';
+    div.innerHTML = `
+      <span class="loot-result-type">${escapeHtml(card.fm.card_type || '')}</span>
+      <span class="loot-result-name">${escapeHtml(card.fm.name || '')}</span>
+      <span class="loot-result-gen">Gen ${escapeHtml(String(card.fm.generation || '?'))}</span>
+      <span class="loot-result-slot">${escapeHtml(card.fm.slots || '')}</span>
+    `;
+    div.addEventListener('click', () => stageLootCard(card));
+    results.appendChild(div);
+  }
+  if (filtered.length > 20) {
+    const hint = document.createElement('span');
+    hint.className   = 'loot-hint';
+    hint.textContent = `${filtered.length - 20} more — refine your search.`;
+    results.appendChild(hint);
+  }
+}
+
+/**
+ * Adds a card from the library to the staged loot list.
+ * Initialises its assignment to 'group'.
+ *
+ * @param {{ path: string, fm: object }} card
+ */
+function stageLootCard(card) {
+  state.lootStaged.push({ path: card.path, fm: card.fm, assignTo: 'group' });
+  renderLootStaged();
+}
+
+/**
+ * Rebuilds the staged loot list UI.
+ * Each row shows the card name and a dropdown to assign it to a player or Group Decision.
+ */
+function renderLootStaged() {
+  const section = document.getElementById('loot-staged-section');
+  const list    = document.getElementById('loot-staged-list');
+  const giveBtn = document.getElementById('btn-give-loot');
+
+  if (state.lootStaged.length === 0) {
+    section.style.display = 'none';
+    giveBtn.disabled      = true;
+    return;
+  }
+
+  section.style.display = '';
+  giveBtn.disabled      = false;
+  list.innerHTML        = '';
+
+  // Build player options from the loaded player files
+  const playerOptions = state.playerFiles.map(pf => {
+    const slug = pf.path.split('/players/')[1]?.split('/')[0] || '';
+    const name = pf.frontmatter.name || slug;
+    return { slug, name };
+  });
+
+  state.lootStaged.forEach((item, idx) => {
+    const row = document.createElement('div');
+    row.className = 'loot-staged-row';
+
+    const playerOptsHtml = playerOptions.map(p =>
+      `<option value="${escapeHtml(p.slug)}" ${item.assignTo === p.slug ? 'selected' : ''}>${escapeHtml(p.name)}</option>`
+    ).join('');
+
+    row.innerHTML = `
+      <span class="loot-staged-type">${escapeHtml(item.fm.card_type || '')}</span>
+      <span class="loot-staged-name">${escapeHtml(item.fm.name || '')}</span>
+      <select class="loot-assign-select" data-idx="${idx}">
+        <option value="group" ${item.assignTo === 'group' ? 'selected' : ''}>Group Decision</option>
+        ${playerOptsHtml}
+      </select>
+      <button class="btn btn-danger btn-xs loot-staged-remove" data-idx="${idx}" title="Remove">&times;</button>
+    `;
+    list.appendChild(row);
+  });
+
+  // Wire assignment dropdowns
+  list.querySelectorAll('.loot-assign-select').forEach(sel => {
+    sel.addEventListener('change', (e) => {
+      const idx = parseInt(e.target.dataset.idx);
+      state.lootStaged[idx].assignTo = e.target.value;
+    });
+  });
+
+  // Wire remove buttons
+  list.querySelectorAll('.loot-staged-remove').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const idx = parseInt(e.target.dataset.idx);
+      state.lootStaged.splice(idx, 1);
+      renderLootStaged();
+    });
+  });
+}
+
+// =====================================================
+// DISTRIBUTE LOOT — GIVE LOOT FLOW
+// =====================================================
+
+/**
+ * Main entry point when the DM clicks "Give Loot".
+ * Writes the full loot session to Firebase then closes the modal.
+ * The actual delivery is handled by the player app listening to Firebase.
+ * After all player-direct cards are dealt with, the group loot phase begins.
+ */
+async function giveLoot() {
+  if (state.lootStaged.length === 0) return;
+  if (!state.activeCampaign) {
+    alert('No active campaign.');
+    return;
+  }
+
+  const btn = document.getElementById('btn-give-loot');
+  btn.disabled      = true;
+  btn.textContent   = 'Sending…';
+
+  try {
+    // Build the loot session object for Firebase
+    // Each card gets a unique key, assigned player (or 'group'), and claim state.
+    const lootSession = {
+      createdAt:   Date.now(),
+      phase:       'player',   // 'player' then 'group'
+      cards:       {},
+    };
+
+    state.lootStaged.forEach((item, idx) => {
+      const key = `card_${idx}`;
+      lootSession.cards[key] = {
+        cardPath:     item.path,
+        name:         item.fm.name || '',
+        card_type:    item.fm.card_type || '',
+        slots:        item.fm.slots || 'hand',   // native "must be in" slot type
+        generation:   item.fm.generation || 1,
+        assignTo:     item.assignTo,              // player slug or 'group'
+        claimedBy:    null,                       // set when a player claims it
+        claimLocked:  false,                      // set to true during a claim transaction
+        resolvedAt:   null,                       // timestamp when fully resolved
+      };
+    });
+
+    await set(ref(_db, firebaseLootPath(state.activeCampaign.id)), lootSession);
+
+    closeLootModal();
+    openDmLootObserver();
+  } catch (e) {
+    alert('Failed to send loot: ' + e.message);
+    btn.disabled    = false;
+    btn.textContent = 'Give Loot';
+  }
+}
+
+// =====================================================
+// DISTRIBUTE LOOT — DM OBSERVER
+// =====================================================
+
+/**
+ * Opens the DM observer overlay and subscribes to the Firebase loot session
+ * so the DM can see in real time which cards have been claimed.
+ */
+function openDmLootObserver() {
+  document.getElementById('dm-loot-observer').style.display = '';
+
+  if (state._lootFbUnsub) state._lootFbUnsub();
+
+  const lootRef = ref(_db, firebaseLootPath(state.activeCampaign.id));
+  state._lootFbUnsub = onValue(lootRef, (snapshot) => {
+    const session = snapshot.val();
+    if (!session) {
+      // Loot session cleared — close the observer
+      closeDmLootObserver();
+      return;
+    }
+    renderDmObserverCards(session);
+  });
+}
+
+function closeDmLootObserver() {
+  document.getElementById('dm-loot-observer').style.display = 'none';
+  if (state._lootFbUnsub) { state._lootFbUnsub(); state._lootFbUnsub = null; }
+}
+
+/**
+ * Renders the DM observer card list showing claim status of all loot cards.
+ *
+ * @param {object} session - The Firebase loot session object
+ */
+function renderDmObserverCards(session) {
+  const container = document.getElementById('dm-observer-cards');
+  container.innerHTML = '';
+
+  const cards = Object.entries(session.cards || {});
+  if (cards.length === 0) {
+    container.innerHTML = '<span class="loot-hint">No cards remaining.</span>';
+    return;
+  }
+
+  for (const [key, card] of cards) {
+    const div = document.createElement('div');
+    div.className = 'dm-observer-card-row';
+
+    let statusText = 'Pending';
+    let statusClass = 'status-pending';
+    if (card.claimedBy) {
+      // Look up the player name from the slug
+      const pf = state.playerFiles.find(f => {
+        const slug = f.path.split('/players/')[1]?.split('/')[0] || '';
+        return slug === card.claimedBy;
+      });
+      const claimerName = pf ? pf.frontmatter.name : card.claimedBy;
+      statusText  = `Claimed by ${claimerName}`;
+      statusClass = 'status-claimed';
+    } else if (card.assignTo !== 'group') {
+      const pf = state.playerFiles.find(f => {
+        const slug = f.path.split('/players/')[1]?.split('/')[0] || '';
+        return slug === card.assignTo;
+      });
+      const assignedName = pf ? pf.frontmatter.name : card.assignTo;
+      statusText  = `Awaiting ${assignedName}`;
+      statusClass = 'status-assigned';
+    }
+
+    div.innerHTML = `
+      <span class="loot-result-type">${escapeHtml(card.card_type || '')}</span>
+      <span class="loot-result-name">${escapeHtml(card.name)}</span>
+      <span class="dm-observer-status ${statusClass}">${escapeHtml(statusText)}</span>
+    `;
+    container.appendChild(div);
+  }
+}
+
+/**
+ * DM abandons all remaining unclaimed loot.
+ * Clears the Firebase loot session entirely.
+ */
+async function abandonLoot() {
+  if (!state.activeCampaign) return;
+  if (!confirm('Abandon all remaining unclaimed loot? This cannot be undone.')) return;
+
+  try {
+    await remove(ref(_db, firebaseLootPath(state.activeCampaign.id)));
+    closeDmLootObserver();
+  } catch (e) {
+    alert('Failed to abandon loot: ' + e.message);
+  }
+}
+
+// =====================================================
 // MAIN INIT
 // =====================================================
 
@@ -2088,6 +2458,24 @@ document.addEventListener('DOMContentLoaded', () => {
     if (state.hpEntries.length === 0) return;
     if (confirm('Clear all HP trackers?')) clearAllHp();
   });
+
+  // Distribute Loot button
+  document.getElementById('btn-distribute-loot').addEventListener('click', openLootModal);
+
+  // Loot modal: close / cancel
+  document.getElementById('btn-loot-modal-close').addEventListener('click', closeLootModal);
+  document.getElementById('btn-loot-cancel').addEventListener('click', closeLootModal);
+
+  // Loot modal: search inputs trigger live filtering
+  document.getElementById('loot-search-input').addEventListener('input', renderLootSearchResults);
+  document.getElementById('loot-filter-type').addEventListener('change', renderLootSearchResults);
+  document.getElementById('loot-filter-gen').addEventListener('change', renderLootSearchResults);
+
+  // Loot modal: give loot button
+  document.getElementById('btn-give-loot').addEventListener('click', giveLoot);
+
+  // DM observer: abandon remaining loot
+  document.getElementById('btn-dm-abandon-loot').addEventListener('click', abandonLoot);
 
   // Rest approval buttons (event delegation on the player panel body)
   document.getElementById('player-panel-body').addEventListener('click', (e) => {

@@ -78,6 +78,64 @@ export function firebaseCampaignPath(campaignId) {
   return `campaigns/${campaignId}`;
 }
 
+// ─── Levelling table ──────────────────────────────────────────────────────────
+
+/**
+ * Full level 1–20 progression table.
+ * active_slots / hand_slots: total slots at this level (not the delta).
+ * stat_points_gained: extra points the player gets to distribute on reaching this level
+ *   (0 at level 1 — starting stats are handled at character creation).
+ *   NOTE: The stat point schedule is set to +2 per level as a placeholder.
+ *   Update these values if the actual schedule differs.
+ * perk_tier: null = no perk this level; 5/10/17 = which perk tier is unlocked.
+ */
+export const LEVEL_TABLE = [
+  { level:  1, active_slots: 4, hand_slots: 4, stat_points_gained: 0,  perk_tier: null },
+  { level:  2, active_slots: 5, hand_slots: 4, stat_points_gained: 2,  perk_tier: null },
+  { level:  3, active_slots: 5, hand_slots: 4, stat_points_gained: 2,  perk_tier: null },
+  { level:  4, active_slots: 5, hand_slots: 5, stat_points_gained: 2,  perk_tier: null },
+  { level:  5, active_slots: 5, hand_slots: 5, stat_points_gained: 2,  perk_tier: 5    },
+  { level:  6, active_slots: 5, hand_slots: 5, stat_points_gained: 2,  perk_tier: null },
+  { level:  7, active_slots: 6, hand_slots: 5, stat_points_gained: 2,  perk_tier: null },
+  { level:  8, active_slots: 6, hand_slots: 6, stat_points_gained: 2,  perk_tier: null },
+  { level:  9, active_slots: 6, hand_slots: 6, stat_points_gained: 2,  perk_tier: null },
+  { level: 10, active_slots: 6, hand_slots: 6, stat_points_gained: 2,  perk_tier: 10   },
+  { level: 11, active_slots: 7, hand_slots: 6, stat_points_gained: 2,  perk_tier: null },
+  { level: 12, active_slots: 7, hand_slots: 6, stat_points_gained: 2,  perk_tier: null },
+  { level: 13, active_slots: 7, hand_slots: 7, stat_points_gained: 2,  perk_tier: null },
+  { level: 14, active_slots: 8, hand_slots: 7, stat_points_gained: 2,  perk_tier: null },
+  { level: 15, active_slots: 8, hand_slots: 7, stat_points_gained: 2,  perk_tier: null },
+  { level: 16, active_slots: 8, hand_slots: 8, stat_points_gained: 2,  perk_tier: null },
+  { level: 17, active_slots: 8, hand_slots: 8, stat_points_gained: 2,  perk_tier: 17   },
+  { level: 18, active_slots: 8, hand_slots: 8, stat_points_gained: 2,  perk_tier: null },
+  { level: 19, active_slots: 9, hand_slots: 8, stat_points_gained: 2,  perk_tier: null },
+  { level: 20, active_slots: 9, hand_slots: 9, stat_points_gained: 2,  perk_tier: null },
+];
+
+/**
+ * Returns the level row for a given level number.
+ * Falls back to level 1 if the level is out of range.
+ *
+ * @param {number} level
+ * @returns {{ level, active_slots, hand_slots, stat_points_gained, perk_tier }}
+ */
+export function getLevelData(level) {
+  return LEVEL_TABLE.find(row => row.level === level) || LEVEL_TABLE[0];
+}
+
+// ─── Firebase loot path helpers ────────────────────────────────────────────────
+
+/**
+ * Returns the Firebase path for the active loot session.
+ * The loot node holds all pending loot cards and their claim state.
+ *
+ * @param {string} campaignId - e.g. "campaign-01"
+ * @returns {string}
+ */
+export function firebaseLootPath(campaignId) {
+  return `campaigns/${campaignId}/loot`;
+}
+
 // ─── App constants ─────────────────────────────────────────────────────────────
 
 /** Milliseconds to wait after an HP change before writing back to GitHub. */

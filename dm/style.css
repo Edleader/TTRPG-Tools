@@ -1673,3 +1673,203 @@ html, body {
   justify-content: flex-end;
   flex-shrink: 0;
 }
+
+/* =====================================================
+   DISTRIBUTE LOOT — DM MODAL & OBSERVER
+   ===================================================== */
+
+.btn-loot {
+  background: var(--accent);
+  color: #fff;
+}
+.btn-loot:hover { filter: brightness(1.15); }
+
+/* Full-screen overlay backdrop */
+.loot-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.65);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Modal card container */
+.loot-modal-card {
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  width: min(680px, 96vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  overflow: hidden;
+}
+
+.loot-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.loot-modal-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Search row */
+.loot-search-row {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.loot-search-input {
+  flex: 1;
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+.loot-search-input:focus { border-color: var(--accent-dim); outline: none; }
+
+.loot-filter-select {
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 5px 6px;
+  border-radius: 4px;
+  font-size: 0.82rem;
+}
+
+/* Search results list */
+.loot-search-results {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  min-height: 80px;
+  max-height: 200px;
+  padding: 4px 0;
+}
+
+.loot-hint {
+  display: block;
+  padding: 8px 10px;
+  color: var(--text-faint);
+  font-size: 0.82rem;
+}
+
+.loot-result-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+.loot-result-row:last-child { border-bottom: none; }
+.loot-result-row:hover { background: var(--hover-bg); }
+
+.loot-result-type {
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  width: 54px;
+  flex-shrink: 0;
+}
+.loot-result-name { flex: 1; font-size: 0.88rem; color: var(--text); }
+.loot-result-gen  { font-size: 0.75rem; color: var(--text-sub); flex-shrink: 0; }
+.loot-result-slot { font-size: 0.75rem; color: var(--accent-dim); flex-shrink: 0; width: 44px; text-align: right; }
+
+/* Staged loot section */
+.loot-staged-section {
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.loot-staged-header {
+  font-size: 0.78rem;
+  color: var(--text-sub);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.loot-staged-list { display: flex; flex-direction: column; gap: 5px; }
+
+.loot-staged-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+}
+
+.loot-staged-type {
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  width: 54px;
+  flex-shrink: 0;
+}
+.loot-staged-name { flex: 1; color: var(--text); }
+
+.loot-assign-select {
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 3px 5px;
+  border-radius: 3px;
+  font-size: 0.8rem;
+  max-width: 160px;
+}
+
+/* Modal footer */
+.loot-modal-footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+/* DM observer */
+.loot-observer-sub {
+  font-size: 0.85rem;
+  color: var(--text-sub);
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.dm-observer-cards {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.dm-observer-card-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+
+.dm-observer-status { margin-left: auto; font-size: 0.8rem; }
+.status-pending  { color: var(--text-faint); }
+.status-assigned { color: var(--accent-dim); }
+.status-claimed  { color: #4caf50; }

@@ -115,18 +115,56 @@ export async function writeFile(path, content, message, sha = null) {
 }
 
 /**
- * Copies a file from one repo path to another.
- * Reads the source then writes to the destination as a new file.
+ * Copies a file from one repo path to another, injecting extra frontmatter fields.
+ * Reads the source, merges in extraFields, then writes to the destination.
  *
- * @param {string} sourcePath - Repo-relative path of the source file
- * @param {string} destPath   - Repo-relative destination path
- * @param {string} message    - Git commit message
+ * @param {string} sourcePath  - Repo-relative path of the source file
+ * @param {string} destPath    - Repo-relative destination path
+ * @param {string} message     - Git commit message
+ * @param {object} [extraFields] - Extra frontmatter key/value pairs to inject (e.g. { player_slot: 'hand' })
  * @returns {Promise<{ sha: string }>} SHA of the newly created file
  * @throws {Error} if the read or write fails
  */
-export async function copyFile(sourcePath, destPath, message) {
+export async function copyFile(sourcePath, destPath, message, extraFields = {}) {
   const { content } = await readFile(sourcePath);
-  return writeFile(destPath, content, message, null);
+  let finalContent  = content;
+
+  if (Object.keys(extraFields).length > 0) {
+    const fm = parseFrontmatter(content);
+    Object.assign(fm, extraFields);
+    finalContent = serialiseFrontmatter(fm);
+  }
+
+  return writeFile(destPath, finalContent, message, null);
+}
+
+/**
+ * Deletes a file from the repo via a git commit.
+ *
+ * @param {string} path    - Repo-relative file path
+ * @param {string} sha     - Current SHA of the file (required by GitHub API)
+ * @param {string} message - Git commit message
+ * @returns {Promise<void>}
+ * @throws {Error} if the delete fails
+ */
+export async function deleteFile(path, sha, message) {
+  const apiPath = `/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${path}`;
+  const url     = proxyUrl(apiPath);
+
+  const response = await fetch(url, {
+    method:  'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ message, sha, branch: GITHUB_BRANCH }),
+  });
+
+  if (!response.ok) {
+    let detail = response.statusText;
+    try {
+      const err = await response.json();
+      detail = err.message || detail;
+    } catch (_) {}
+    throw new Error(`GitHub API error (${response.status}): ${detail}`);
+  }
 }
 
 /**

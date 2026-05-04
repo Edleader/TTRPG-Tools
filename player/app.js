@@ -18,17 +18,20 @@ import {
   listCampaigns,
   parseFrontmatter,
   serialiseFrontmatter,
+  copyFile,
+  deleteFile,
 } from '../shared/github-api.js';
 
 import {
   FIREBASE_CONFIG,
   firebasePlayerPath,
   firebaseCampaignPath,
+  firebaseLootPath,
   HP_DEBOUNCE_MS,
 } from '../shared/config.js';
 
 import { initializeApp }      from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getDatabase, ref, onValue, set, get }
+import { getDatabase, ref, onValue, set, get, runTransaction, remove }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
 
 // =====================================================
@@ -65,6 +68,15 @@ const state = {
 
   // Debounce timer for HP writes
   _hpTimer: null,
+
+  // Loot state
+  lootNotifyCards:   [],   // cards being delivered directly to this player right now
+  lootNotifyTimer:   null, // auto-close countdown timer
+  groupLootSession:  null, // current Firebase loot session snapshot
+
+  // Cached card arrays (set after loadAndRenderCards completes)
+  _activeCards: [],
+  _handCards:   [],
 };
 
 // =====================================================
@@ -427,19 +439,29 @@ async function loadAndRenderCards() {
     return;
   }
 
-  // Load all card files in parallel
+  // Load all card files in parallel, preserving path and sha for later writes/deletes
   const cards = await Promise.all(
     inventoryFiles.map(async entry => {
       try {
-        const { content } = await readFile(entry.path);
-        return parseFrontmatter(content);
+        const { content, sha } = await readFile(entry.path);
+        const fm = parseFrontmatter(content);
+        fm._path = entry.path;
+        fm._sha  = sha;
+        return fm;
       } catch (_) { return null; }
     })
   );
 
-  const validCards  = cards.filter(Boolean);
-  const activeCards = validCards.filter(c => (c.slots || '').toLowerCase() === 'active');
-  const handCards   = validCards.filter(c => (c.slots || '').toLowerCase() === 'hand');
+  const validCards = cards.filter(Boolean);
+
+  // player_slot is where THIS player has placed the card (hand or active).
+  // Falls back to the card's native 'slots' field if player_slot not yet set.
+  const activeCards = validCards.filter(c =>
+    (c.player_slot || c.slots || '').toLowerCase() === 'active'
+  );
+  const handCards = validCards.filter(c =>
+    (c.player_slot || c.slots || '').toLowerCase() === 'hand'
+  );
 
   const maxActive = state.fm.active_slots || 4;
   const maxHand   = state.fm.hand_slots   || 4;
@@ -454,6 +476,10 @@ async function loadAndRenderCards() {
     .filter(c => (c.card_type || '').toLowerCase() === 'armour')
     .reduce((sum, c) => sum + (parseInt(c.dr) || 0), 0);
   document.getElementById('stat-armour').textContent = totalArmour;
+
+  // Cache for loot/discard functions
+  state._activeCards = activeCards;
+  state._handCards   = handCards;
 
   renderCardGrid(activeEl, activeCards);
   renderCardGrid(handEl,   handCards);
@@ -622,13 +648,11 @@ function subscribeFirebase() {
     if (typeof remoteHp === 'number' && remoteHp !== state.currentHp) {
       state.currentHp = Math.max(0, Math.min(state.maxHp, remoteHp));
       renderHp();
-      // Don't push back to Firebase — we just received this value
     }
 
     // Rest approval?
     const restReq    = playerData.rest_request;
     if (restReq && restReq.status === 'approved') {
-      // Clear the request from Firebase then apply effects silently
       set(ref(db,
         `${firebasePlayerPath(state.campaignId, state.characterSlug)}/rest_request`
       ), null);
@@ -636,9 +660,441 @@ function subscribeFirebase() {
       if (restReq.type === 'short') applyShortRest();
       else if (restReq.type === 'long') applyLongRest();
     }
+
+    // Loot session?
+    onLootSessionUpdate(data.loot || null);
   });
 
   state._fbUnsub = unsubscribe;
+}
+
+// =====================================================
+// LOOT — RECEIVING FLOW
+// =====================================================
+
+/**
+ * Called whenever the Firebase loot session changes.
+ * Decides whether to show the player-specific notification or the group loot screen.
+ *
+ * @param {object|null} session - The current loot session from Firebase, or null if cleared
+ */
+function onLootSessionUpdate(session) {
+  if (!session || !session.cards) {
+    // Loot session ended — close any loot UI
+    closeLootNotify(false);
+    closeGroupLoot();
+    return;
+  }
+
+  state.groupLootSession = session;
+
+  // Find cards assigned directly to this player that haven't been resolved yet
+  const myCards = Object.entries(session.cards)
+    .filter(([, card]) => card.assignTo === state.characterSlug && !card.claimedBy)
+    .map(([key, card]) => ({ key, ...card }));
+
+  // Find group cards (including overflowed player cards) that are still unclaimed
+  const groupCards = Object.entries(session.cards)
+    .filter(([, card]) => (card.assignTo === 'group' || card.forceGroup) && !card.claimedBy)
+    .map(([key, card]) => ({ key, ...card }));
+
+  // Phase 1: player-specific notifications take priority
+  // Only show notify if we haven't already shown it for these cards (check by key)
+  const notifyOverlay = document.getElementById('loot-notify-overlay');
+  const groupOverlay  = document.getElementById('group-loot-overlay');
+
+  if (myCards.length > 0 && notifyOverlay.style.display === 'none') {
+    showLootNotify(myCards);
+  } else if (myCards.length === 0 && groupCards.length > 0 && notifyOverlay.style.display === 'none') {
+    // All player-specific cards resolved — show group loot if not already open
+    if (groupOverlay.style.display === 'none') {
+      showGroupLoot(groupCards);
+    } else {
+      // Group loot already open — refresh it
+      renderGroupLootCards(groupCards);
+    }
+  }
+}
+
+// ─── Player notification overlay ──────────────────────────────────────────────
+
+/**
+ * Shows the loot notification overlay with cards sent directly to this player.
+ * The player can accept (card goes to hand), discard one of their own cards to
+ * make room, or send the card to the group pool.
+ *
+ * @param {Array} cards - [{ key, name, card_type, slots, cardPath, assignTo, ... }]
+ */
+function showLootNotify(cards) {
+  state.lootNotifyCards = cards;
+
+  const overlay  = document.getElementById('loot-notify-overlay');
+  const list     = document.getElementById('loot-notify-list');
+  const sendBtn  = document.getElementById('btn-loot-send-to-group');
+
+  // Render received card list
+  list.innerHTML = '';
+  for (const card of cards) {
+    const div = document.createElement('div');
+    div.className = 'loot-notify-card-row';
+    div.innerHTML = `
+      <span class="loot-notify-card-type">${escapeHtml(card.card_type || '')}</span>
+      <span class="loot-notify-card-name">${escapeHtml(card.name)}</span>
+      <span class="loot-notify-card-slot">(goes in: ${escapeHtml(card.slots || 'hand')})</span>
+    `;
+    list.appendChild(div);
+  }
+
+  // Check if this player has space for all incoming cards
+  checkAndShowDiscardPrompt(cards);
+
+  // Always show "send to group" option
+  sendBtn.style.display = '';
+
+  overlay.style.display = '';
+
+  // Start 5-second auto-close countdown
+  startLootNotifyCountdown();
+}
+
+/**
+ * Checks if the player has enough free slots for the incoming cards.
+ * Shows the discard prompt if not.
+ *
+ * @param {Array} incomingCards
+ */
+function checkAndShowDiscardPrompt(incomingCards) {
+  const promptEl  = document.getElementById('loot-notify-discard-prompt');
+  const msgEl     = document.getElementById('loot-notify-discard-msg');
+  const cardsEl   = document.getElementById('loot-notify-discard-cards');
+
+  const fm         = state.fm;
+  const maxActive  = fm.active_slots || 4;
+  const maxHand    = fm.hand_slots   || 4;
+  const curActive  = (state._activeCards || []).length;
+  const curHand    = (state._handCards   || []).length;
+
+  // Count how many incoming cards need each slot type
+  const needActive = incomingCards.filter(c => (c.slots || 'hand') === 'active').length;
+  const needHand   = incomingCards.filter(c => (c.slots || 'hand') !== 'active').length;
+
+  const activeOverflow = Math.max(0, (curActive + needActive) - maxActive);
+  const handOverflow   = Math.max(0, (curHand   + needHand)   - maxHand);
+
+  if (activeOverflow === 0 && handOverflow === 0) {
+    promptEl.style.display = 'none';
+    return;
+  }
+
+  // Build discard message
+  const parts = [];
+  if (activeOverflow > 0) parts.push(`${activeOverflow} active slot${activeOverflow > 1 ? 's' : ''}`);
+  if (handOverflow   > 0) parts.push(`${handOverflow} hand slot${handOverflow   > 1 ? 's' : ''}`);
+  msgEl.textContent = `You need to free up ${parts.join(' and ')} to receive all cards. Tap a card below to discard it, or send cards to the group.`;
+
+  // Show all currently owned cards as discard candidates
+  const allOwned = [...(state._activeCards || []), ...(state._handCards || [])];
+  cardsEl.innerHTML = '';
+  for (const card of allOwned) {
+    const btn = document.createElement('button');
+    btn.className   = 'btn btn-secondary btn-xs loot-discard-btn';
+    btn.textContent = `Discard: ${card.name}`;
+    btn.addEventListener('click', () => discardCard(card, 'notify'));
+    cardsEl.appendChild(btn);
+  }
+
+  promptEl.style.display = '';
+}
+
+/**
+ * Starts the 5-second auto-close countdown for the loot notification.
+ */
+function startLootNotifyCountdown() {
+  clearInterval(state.lootNotifyTimer);
+  const countdownEl = document.getElementById('loot-notify-countdown');
+  let seconds = 5;
+  countdownEl.textContent = `Auto-closing in ${seconds}s…`;
+
+  state.lootNotifyTimer = setInterval(() => {
+    seconds--;
+    if (seconds <= 0) {
+      clearInterval(state.lootNotifyTimer);
+      // Auto-accept: copy cards to player's folder and close
+      acceptLootCards(state.lootNotifyCards);
+    } else {
+      countdownEl.textContent = `Auto-closing in ${seconds}s…`;
+    }
+  }, 1000);
+}
+
+/**
+ * Accepts all notified cards — copies each from the library to the player's
+ * cards folder with player_slot set to the card's native slot type.
+ * Marks each card as claimed in Firebase.
+ *
+ * @param {Array} cards
+ */
+async function acceptLootCards(cards) {
+  clearInterval(state.lootNotifyTimer);
+  closeLootNotify(false);
+
+  for (const card of cards) {
+    await deliverCardToPlayer(card, state.characterSlug, card.slots || 'hand');
+  }
+
+  // Refresh the card display
+  loadAndRenderCards();
+}
+
+/**
+ * Copies a card from the master library to this player's cards folder.
+ * Sets player_slot in the frontmatter.
+ * Marks the card as claimed in Firebase.
+ *
+ * @param {object} card      - The loot card object from Firebase
+ * @param {string} slug      - The player's character slug
+ * @param {string} playerSlot - 'hand' or 'active'
+ */
+async function deliverCardToPlayer(card, slug, playerSlot) {
+  const filename  = card.cardPath.split('/').pop();
+  const destPath  = `${state.campaignPath}/players/${slug}/cards/${filename}`;
+
+  try {
+    await copyFile(card.cardPath, destPath, `Give ${card.name} to ${slug}`, { player_slot: playerSlot });
+
+    // Mark as claimed in Firebase
+    const cardRef = ref(db, `${firebaseLootPath(state.campaignId)}/cards/${card.key}`);
+    await set(cardRef, { ...card, claimedBy: slug, resolvedAt: Date.now() });
+  } catch (e) {
+    console.error(`Failed to deliver ${card.name}:`, e);
+  }
+}
+
+/**
+ * Sends all current notification cards to the group loot pool instead.
+ */
+async function sendNotifyCardsToGroup() {
+  clearInterval(state.lootNotifyTimer);
+  closeLootNotify(false);
+
+  for (const card of state.lootNotifyCards) {
+    const cardRef = ref(db, `${firebaseLootPath(state.campaignId)}/cards/${card.key}`);
+    // Mark forceGroup so the group loot screen shows "Intended for <name>"
+    await set(cardRef, { ...card, forceGroup: true, assignTo: 'group' }).catch(() => {});
+  }
+}
+
+/**
+ * Closes the loot notification overlay.
+ *
+ * @param {boolean} clearTimer - Whether to stop the countdown timer
+ */
+function closeLootNotify(clearTimer = true) {
+  if (clearTimer) clearInterval(state.lootNotifyTimer);
+  document.getElementById('loot-notify-overlay').style.display = 'none';
+  document.getElementById('loot-notify-discard-prompt').style.display = 'none';
+  state.lootNotifyCards = [];
+}
+
+// ─── Group loot screen ─────────────────────────────────────────────────────────
+
+const GROUP_LOOT_LOCK_SECONDS = 10;
+
+/**
+ * Shows the group loot overlay with all unclaimed group cards.
+ * Claim button is locked for GROUP_LOOT_LOCK_SECONDS seconds.
+ *
+ * @param {Array} cards
+ */
+function showGroupLoot(cards) {
+  const overlay = document.getElementById('group-loot-overlay');
+  overlay.style.display = '';
+
+  renderGroupLootCards(cards);
+  renderGroupDiscardSection();
+}
+
+/**
+ * Renders the horizontal row of group loot cards.
+ * Each card has a claim button that is locked initially.
+ *
+ * @param {Array} cards
+ */
+function renderGroupLootCards(cards) {
+  const container = document.getElementById('group-loot-cards');
+  container.innerHTML = '';
+
+  for (const card of cards) {
+    const div = document.createElement('div');
+    div.className    = 'group-loot-card-tile';
+    div.dataset.key  = card.key;
+
+    // Label "intended for" if the card overflowed from a named player
+    const intendedLabel = (card.forceGroup && card.assignTo && card.assignTo !== 'group')
+      ? `<div class="group-loot-intended">Intended for ${escapeHtml(card.originalAssignee || card.assignTo)}</div>`
+      : '';
+
+    const claimedLabel = card.claimedBy
+      ? `<div class="group-loot-claimed">Claimed</div>`
+      : '';
+
+    div.innerHTML = `
+      ${intendedLabel}
+      <div class="group-loot-tile-type">${escapeHtml(card.card_type || '')}</div>
+      <div class="group-loot-tile-name">${escapeHtml(card.name)}</div>
+      <div class="group-loot-tile-slot">Slot: ${escapeHtml(card.slots || 'hand')}</div>
+      ${claimedLabel}
+      ${!card.claimedBy ? `
+        <div class="group-loot-slot-choice" id="slot-choice-${escapeHtml(card.key)}" style="display:none">
+          <button class="btn btn-sm" data-key="${escapeHtml(card.key)}" data-slot="active">Active</button>
+          <button class="btn btn-secondary btn-sm" data-key="${escapeHtml(card.key)}" data-slot="hand">Hand</button>
+        </div>
+        <button class="btn btn-sm group-claim-btn" id="claim-btn-${escapeHtml(card.key)}"
+          data-key="${escapeHtml(card.key)}" disabled>
+          Claim (${GROUP_LOOT_LOCK_SECONDS}s)
+        </button>
+      ` : ''}
+    `;
+    container.appendChild(div);
+  }
+
+  // Unlock claim buttons after GROUP_LOOT_LOCK_SECONDS seconds
+  let remaining = GROUP_LOOT_LOCK_SECONDS;
+  const timer = setInterval(() => {
+    remaining--;
+    container.querySelectorAll('.group-claim-btn').forEach(btn => {
+      if (remaining <= 0) {
+        btn.disabled     = false;
+        btn.textContent  = 'Claim';
+      } else {
+        btn.textContent = `Claim (${remaining}s)`;
+      }
+    });
+    if (remaining <= 0) clearInterval(timer);
+  }, 1000);
+
+  // Wire claim buttons — show slot choice on click
+  container.addEventListener('click', (e) => {
+    const claimBtn = e.target.closest('.group-claim-btn:not([disabled])');
+    if (claimBtn) {
+      const key        = claimBtn.dataset.key;
+      const choiceDiv  = document.getElementById(`slot-choice-${key}`);
+      if (choiceDiv) {
+        claimBtn.style.display   = 'none';
+        choiceDiv.style.display  = '';
+      }
+      return;
+    }
+
+    // Slot choice button (active / hand)
+    const slotBtn = e.target.closest('[data-slot]');
+    if (slotBtn) {
+      const key       = slotBtn.dataset.key;
+      const slotChoice = slotBtn.dataset.slot;
+      claimGroupCard(key, slotChoice);
+    }
+  });
+}
+
+/**
+ * Renders the player's own cards in the group loot discard section
+ * so they can free up space during the group claim phase.
+ */
+function renderGroupDiscardSection() {
+  const container = document.getElementById('group-discard-hand-cards');
+  container.innerHTML = '';
+
+  const allOwned = [...(state._activeCards || []), ...(state._handCards || [])];
+  if (allOwned.length === 0) {
+    container.innerHTML = '<span class="loot-hint">No cards to discard.</span>';
+    return;
+  }
+
+  for (const card of allOwned) {
+    const btn = document.createElement('button');
+    btn.className   = 'btn btn-secondary btn-xs loot-discard-btn';
+    btn.textContent = `Discard: ${card.name} (${card.player_slot || card.slots || 'hand'})`;
+    btn.addEventListener('click', () => discardCard(card, 'group'));
+    container.appendChild(btn);
+  }
+}
+
+/**
+ * Atomically claims a group loot card using a Firebase transaction.
+ * Only one player can win — if another player claims first, the transaction
+ * sees the card is already claimed and does nothing.
+ *
+ * @param {string} key       - The card key in the Firebase loot session
+ * @param {string} slotChoice - 'hand' or 'active'
+ */
+async function claimGroupCard(key, slotChoice) {
+  const cardRef = ref(db, `${firebaseLootPath(state.campaignId)}/cards/${key}`);
+
+  let cardData = null;
+
+  try {
+    // runTransaction is atomic — if two players call this at the same time,
+    // only one will see claimedBy === null and win; the other's transaction
+    // will receive the already-claimed value and abort.
+    const result = await runTransaction(cardRef, (currentCard) => {
+      if (!currentCard) return; // aborts if data doesn't exist
+      if (currentCard.claimedBy) return; // abort — already claimed
+      return { ...currentCard, claimedBy: state.characterSlug, resolvedAt: Date.now() };
+    });
+
+    if (!result.committed) {
+      // Another player claimed it first — inform this player
+      alert('Sorry — someone else claimed that card just before you!');
+      return;
+    }
+
+    cardData = result.snapshot.val();
+  } catch (e) {
+    alert('Failed to claim card. Please try again.');
+    return;
+  }
+
+  // Transaction won — now copy the card file to this player's folder
+  await deliverCardToPlayer({ ...cardData, key }, state.characterSlug, slotChoice);
+  loadAndRenderCards();
+}
+
+/**
+ * Closes the group loot overlay.
+ */
+function closeGroupLoot() {
+  document.getElementById('group-loot-overlay').style.display = 'none';
+  state.groupLootSession = null;
+}
+
+// ─── Discard ──────────────────────────────────────────────────────────────────
+
+/**
+ * Discards a card from the player's folder (deletes the file from GitHub).
+ * Refreshes the card display and whichever loot prompt is open.
+ *
+ * @param {object} card    - A card object with _path and _sha
+ * @param {string} context - 'notify' or 'group' — which prompt to refresh after
+ */
+async function discardCard(card, context) {
+  if (!confirm(`Discard "${card.name}"? This cannot be undone.`)) return;
+
+  try {
+    await deleteFile(card._path, card._sha, `Discard ${card.name} from ${state.characterSlug}`);
+  } catch (e) {
+    alert('Failed to discard card: ' + e.message);
+    return;
+  }
+
+  // Refresh cards and re-check the loot prompts
+  await loadAndRenderCards();
+
+  if (context === 'notify' && state.lootNotifyCards.length > 0) {
+    checkAndShowDiscardPrompt(state.lootNotifyCards);
+  }
+  if (context === 'group') {
+    renderGroupDiscardSection();
+  }
 }
 
 // =====================================================
@@ -772,6 +1228,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Logout / switch
   document.getElementById('btn-logout').addEventListener('click', logout);
+
+  // Loot notification overlay buttons
+  document.getElementById('btn-loot-notify-okay').addEventListener('click', () => {
+    acceptLootCards(state.lootNotifyCards);
+  });
+  document.getElementById('btn-loot-send-to-group').addEventListener('click', sendNotifyCardsToGroup);
+
+  // Group loot: abandon button
+  // Note: individual claim buttons are wired inside renderGroupLootCards via event delegation
+  document.getElementById('btn-group-abandon').addEventListener('click', async () => {
+    if (!confirm('Abandon all remaining group loot? Unclaimed cards will be lost.')) return;
+    try {
+      await remove(ref(db, firebaseLootPath(state.campaignId)));
+      closeGroupLoot();
+    } catch (e) {
+      alert('Failed to abandon loot: ' + e.message);
+    }
+  });
 
   // Start
   startLogin();
