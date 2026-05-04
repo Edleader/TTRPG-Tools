@@ -175,6 +175,7 @@
     <section class="sheet-section rest-section">
       <button class="btn btn-rest" id="btn-short-rest">Short Rest</button>
       <button class="btn btn-rest btn-long-rest" id="btn-long-rest">Long Rest</button>
+      <button class="btn btn-arrange" id="btn-arrange-cards" style="display:none">Arrange Cards</button>
     </section>
 
     <!-- ── QUICK REFERENCE ────────────────────────── -->
@@ -257,50 +258,68 @@
     </div>
   </div>
 
-  <!-- ── LOOT RECEIVED NOTIFICATION ──────────────────
-       Shown when the DM sends cards directly to this player.
-       Auto-closes after 5 seconds or on "Okay".
+  <!-- ── ARRANGE CARDS OVERLAY ────────────────────────
+       Unified UI for:
+         1. "Arrange Cards" button (standalone, session only)
+         2. Loot received — when space needs to be made
+         3. Group loot claim — when space needs to be made
+       Layout: [Incoming (loot only)] | [Active / Hand] | [Discard]
        ─────────────────────────────────────────────── -->
-  <div id="loot-notify-overlay" class="loot-notify-overlay" style="display:none" role="dialog" aria-modal="true" aria-label="Loot received">
-    <div class="loot-notify-card">
-      <div class="loot-notify-title">You received loot!</div>
-      <div id="loot-notify-list" class="loot-notify-list"></div>
+  <div id="arrange-overlay" class="arrange-overlay" style="display:none" role="dialog" aria-modal="true" aria-label="Arrange cards">
+    <div class="arrange-dialog">
 
-      <!-- Shown if player needs to discard to make space -->
-      <div id="loot-notify-discard-prompt" class="loot-discard-prompt" style="display:none">
-        <div class="loot-discard-msg" id="loot-notify-discard-msg"></div>
-        <div id="loot-notify-discard-cards" class="loot-discard-cards"></div>
-      </div>
-
-      <div class="loot-notify-actions">
-        <button class="btn btn-sm" id="btn-loot-notify-okay">Okay</button>
+      <div class="arrange-header">
+        <span class="arrange-title" id="arrange-title">Arrange Cards</span>
         <button class="btn btn-secondary btn-sm" id="btn-loot-send-to-group" style="display:none">Send to Group</button>
       </div>
-      <div class="loot-notify-countdown" id="loot-notify-countdown"></div>
+
+      <div class="arrange-body">
+
+        <!-- LEFT: Incoming cards (only shown during loot) -->
+        <div class="arrange-col arrange-col-incoming" id="arrange-incoming-col" style="display:none">
+          <div class="arrange-col-header">Incoming</div>
+          <div class="arrange-drop-zone" id="arrange-incoming-zone" data-zone="incoming"></div>
+        </div>
+
+        <!-- CENTRE: Active + Hand sections -->
+        <div class="arrange-col arrange-col-centre">
+          <div class="arrange-col-header" id="arrange-active-header">Active Slots</div>
+          <div class="arrange-drop-zone" id="arrange-active-zone" data-zone="active"></div>
+          <div class="arrange-col-header arrange-col-header-hand" id="arrange-hand-header">Hand</div>
+          <div class="arrange-drop-zone" id="arrange-hand-zone" data-zone="hand"></div>
+          <!-- Validation messages -->
+          <div class="arrange-validation" id="arrange-validation" style="display:none"></div>
+        </div>
+
+        <!-- RIGHT: Discard area -->
+        <div class="arrange-col arrange-col-discard">
+          <div class="arrange-col-header">Discard</div>
+          <p class="arrange-discard-hint">Drag cards here to discard. Cards here will be permanently deleted when you Finalise.</p>
+          <div class="arrange-drop-zone" id="arrange-discard-zone" data-zone="discard"></div>
+        </div>
+
+      </div><!-- /.arrange-body -->
+
+      <div class="arrange-footer">
+        <button class="btn btn-secondary btn-sm" id="btn-arrange-cancel">Cancel</button>
+        <button class="btn btn-sm" id="btn-arrange-finalise">Finish Arranging</button>
+      </div>
+
     </div>
   </div>
 
   <!-- ── GROUP LOOT SCREEN ─────────────────────────────
        Shown to all players at once for group decisions.
-       Cards are displayed horizontally, claim button
-       locked for 10 seconds.
+       Cards displayed horizontally, claim button locked 10s.
        ─────────────────────────────────────────────── -->
   <div id="group-loot-overlay" class="loot-notify-overlay" style="display:none" role="dialog" aria-modal="true" aria-label="Group loot">
     <div class="group-loot-card">
-      <div class="loot-notify-title">Group Loot</div>
-      <p class="group-loot-sub">Your group has loot to claim. Cards are shown below — work together to decide who takes what.</p>
-
-      <!-- Horizontal scrolling row of all group loot cards -->
+      <div class="loot-notify-title" id="group-loot-title">Group Loot</div>
+      <p class="group-loot-sub" id="group-loot-sub">Your group has loot to claim. Work together to decide who takes what.</p>
       <div id="group-loot-cards" class="group-loot-cards"></div>
-
-      <!-- Discard area — shown while group loot is open so players can free slots -->
-      <div id="group-discard-section" class="group-discard-section">
-        <div class="group-discard-header">Your cards (tap to discard and free a slot)</div>
-        <div id="group-discard-hand-cards" class="loot-discard-cards"></div>
-      </div>
-
       <div class="group-loot-actions">
         <button class="btn btn-danger btn-sm" id="btn-group-abandon">Abandon Remaining Loot</button>
+        <button class="btn btn-secondary btn-sm" id="btn-group-loot-close" style="display:none">Close</button>
       </div>
     </div>
   </div>

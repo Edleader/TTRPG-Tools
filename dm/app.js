@@ -2263,10 +2263,15 @@ function openDmLootObserver() {
 function closeDmLootObserver() {
   document.getElementById('dm-loot-observer').style.display = 'none';
   if (state._lootFbUnsub) { state._lootFbUnsub(); state._lootFbUnsub = null; }
+  if (_dmLootResolvedTimer) { clearInterval(_dmLootResolvedTimer); _dmLootResolvedTimer = null; }
+  // Remove the early-close button so it doesn't linger if the overlay reopens
+  const earlyClose = document.querySelector('.btn-dm-loot-close-early');
+  if (earlyClose) earlyClose.remove();
 }
 
 /**
  * Renders the DM observer card list showing claim status of all loot cards.
+ * When all cards are resolved, shows a 5-second countdown then auto-closes.
  *
  * @param {object} session - The Firebase loot session object
  */
@@ -2280,6 +2285,9 @@ function renderDmObserverCards(session) {
     return;
   }
 
+  // Check if every card is resolved
+  const allResolved = cards.every(([, card]) => !!card.claimedBy);
+
   for (const [key, card] of cards) {
     const div = document.createElement('div');
     div.className = 'dm-observer-card-row';
@@ -2287,7 +2295,6 @@ function renderDmObserverCards(session) {
     let statusText = 'Pending';
     let statusClass = 'status-pending';
     if (card.claimedBy) {
-      // Look up the player name from the slug
       const pf = state.playerFiles.find(f => {
         const slug = f.path.split('/players/')[1]?.split('/')[0] || '';
         return slug === card.claimedBy;
@@ -2312,6 +2319,53 @@ function renderDmObserverCards(session) {
     `;
     container.appendChild(div);
   }
+
+  if (allResolved) {
+    showDmLootResolved();
+  }
+}
+
+/**
+ * Shows an "All loot resolved!" message in the DM observer, then auto-closes after 5s.
+ * Calling this while a countdown is already running is a no-op.
+ */
+let _dmLootResolvedTimer = null;
+function showDmLootResolved() {
+  if (_dmLootResolvedTimer) return; // already counting down
+
+  const overlay   = document.getElementById('dm-loot-observer');
+  const subEl     = overlay.querySelector('.loot-observer-sub');
+  const abandonBtn = document.getElementById('btn-dm-abandon-loot');
+
+  if (subEl) subEl.textContent = 'All loot resolved! Closing in 5s…';
+  if (abandonBtn) abandonBtn.style.display = 'none';
+
+  // Add an early-close button if not already present
+  const footer = overlay.querySelector('.loot-modal-footer');
+  if (footer && !footer.querySelector('.btn-dm-loot-close-early')) {
+    const earlyClose = document.createElement('button');
+    earlyClose.className   = 'btn btn-secondary btn-sm btn-dm-loot-close-early';
+    earlyClose.textContent = 'Close';
+    earlyClose.addEventListener('click', () => {
+      clearInterval(_dmLootResolvedTimer);
+      _dmLootResolvedTimer = null;
+      closeDmLootObserver();
+      remove(ref(_db, firebaseLootPath(state.activeCampaign.id))).catch(() => {});
+    });
+    footer.appendChild(earlyClose);
+  }
+
+  let secs = 5;
+  _dmLootResolvedTimer = setInterval(() => {
+    secs--;
+    if (subEl) subEl.textContent = secs > 0 ? `All loot resolved! Closing in ${secs}s…` : '';
+    if (secs <= 0) {
+      clearInterval(_dmLootResolvedTimer);
+      _dmLootResolvedTimer = null;
+      closeDmLootObserver();
+      remove(ref(_db, firebaseLootPath(state.activeCampaign.id))).catch(() => {});
+    }
+  }, 1000);
 }
 
 /**

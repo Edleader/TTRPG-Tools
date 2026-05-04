@@ -919,3 +919,207 @@ html, body {
   display: flex;
   justify-content: flex-end;
 }
+
+/* ─── Arrange Cards overlay ───────────────────────── */
+
+.arrange-overlay {
+  position:        fixed;
+  inset:           0;
+  background:      rgba(0,0,0,0.72);
+  display:         flex;
+  align-items:     center;
+  justify-content: center;
+  z-index:         120;
+  padding:         0.75rem;
+}
+
+.arrange-dialog {
+  background:    var(--surface);
+  border:        1px solid var(--border);
+  border-radius: 10px;
+  width:         min(960px, 98vw);
+  max-height:    94vh;
+  display:       flex;
+  flex-direction: column;
+  overflow:      hidden;
+}
+
+.arrange-header {
+  display:         flex;
+  align-items:     center;
+  justify-content: space-between;
+  padding:         0.85rem 1rem 0.65rem;
+  border-bottom:   1px solid var(--border);
+  flex-shrink:     0;
+}
+
+.arrange-title {
+  font-weight: 600;
+  font-size:   1rem;
+}
+
+.arrange-body {
+  display:    flex;
+  flex:       1;
+  gap:        0.75rem;
+  overflow:   hidden;
+  padding:    0.75rem;
+}
+
+/* Column layout */
+.arrange-col {
+  display:        flex;
+  flex-direction: column;
+  gap:            0.4rem;
+  overflow:       hidden;
+}
+
+.arrange-col-incoming { flex: 0 0 160px; }
+.arrange-col-centre   { flex: 1; min-width: 0; }
+.arrange-col-discard  { flex: 0 0 160px; }
+
+.arrange-col-header {
+  font-size:      0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color:          var(--text-sub);
+  font-weight:    600;
+  padding:        0.15rem 0;
+}
+
+.arrange-col-header-hand {
+  margin-top: 0.5rem;
+}
+
+/* Drop zones */
+.arrange-drop-zone {
+  flex:          1;
+  display:       flex;
+  flex-direction: column;
+  gap:           0.4rem;
+  overflow-y:    auto;
+  border:        1px dashed var(--border);
+  border-radius: 6px;
+  padding:       0.5rem;
+  min-height:    60px;
+}
+
+/* Half-height zones for active/hand in the centre column */
+.arrange-col-centre .arrange-drop-zone {
+  flex: 1 1 0;
+  min-height: 80px;
+}
+
+/* Card tiles inside the arrange overlay */
+.arrange-card-tile {
+  display:       flex;
+  align-items:   center;
+  gap:           0.5rem;
+  border:        1px solid var(--border);
+  border-radius: 5px;
+  padding:       0.4rem 0.55rem;
+  background:    var(--surface-2);
+  font-size:     0.83rem;
+  cursor:        default;
+  user-select:   none;
+  touch-action:  none;
+  flex-shrink:   0;
+}
+
+.arrange-drag-handle {
+  cursor:      grab;
+  color:       var(--text-faint);
+  font-size:   1rem;
+  flex-shrink: 0;
+  padding:     0 2px;
+}
+
+.arrange-drag-handle:active { cursor: grabbing; }
+
+.arrange-card-type {
+  font-size:      0.68rem;
+  color:          var(--text-sub);
+  text-transform: uppercase;
+  flex-shrink:    0;
+}
+
+.arrange-card-name {
+  font-weight: 600;
+  flex:        1;
+  min-width:   0;
+  overflow:    hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor:      pointer;
+  color:       var(--text);
+}
+
+.arrange-card-name:hover { color: var(--accent); }
+
+.arrange-card-slot {
+  font-size:   0.72rem;
+  color:       var(--text-faint);
+  flex-shrink: 0;
+}
+
+/* Incoming cards — read-only, distinct styling */
+.arrange-card-incoming {
+  border-color:   var(--accent-dim);
+  background:     rgba(108, 142, 245, 0.08);
+  flex-direction: column;
+  align-items:    flex-start;
+  gap:            0.2rem;
+}
+
+/* Ghost clone while dragging */
+.arrange-drag-ghost {
+  position:      fixed;
+  pointer-events: none;
+  opacity:       0.75;
+  z-index:       200;
+  box-shadow:    0 6px 20px rgba(0,0,0,0.5);
+  border-color:  var(--accent) !important;
+}
+
+/* Source tile placeholder while card is being dragged */
+.arrange-drag-source {
+  opacity:        0.35;
+  border-style:   dashed;
+}
+
+/* Discard hint text */
+.arrange-discard-hint {
+  font-size:  0.75rem;
+  color:      var(--text-faint);
+  line-height: 1.45;
+}
+
+/* Validation messages */
+.arrange-validation {
+  font-size:   0.8rem;
+  color:       var(--danger);
+  line-height: 1.4;
+}
+
+.arrange-validation div + div { margin-top: 0.25rem; }
+
+/* Empty zone message */
+.arrange-empty {
+  font-size: 0.8rem;
+  color:     var(--text-faint);
+  text-align: center;
+  padding:   0.75rem 0;
+}
+
+/* Footer */
+.arrange-footer {
+  display:         flex;
+  justify-content: center;
+  gap:             0.75rem;
+  padding:         0.65rem 1rem 0.85rem;
+  border-top:      1px solid var(--border);
+  flex-shrink:     0;
+}
+
+/* ── btn-arrange in the rest section ─── */
+.btn-arrange { margin-left: auto; }
