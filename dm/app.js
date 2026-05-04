@@ -30,6 +30,19 @@ import {
   readAllMarkdownFiles,
 } from '../shared/github-api.js';
 
+import {
+  FIREBASE_CONFIG,
+  firebaseCampaignPath,
+} from '../shared/config.js';
+
+import { initializeApp }
+  from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import { getDatabase, ref, onValue }
+  from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+
+const _fbApp = initializeApp(FIREBASE_CONFIG);
+const _db    = getDatabase(_fbApp);
+
 // No token needed here — auth is handled by the Cloudflare Worker proxy
 
 'use strict';
@@ -48,7 +61,10 @@ const state = {
   dmNotesFile:      null,    // { path, sha, content } for the current .dm.md file
   hpEntries:        [],      // [{ id, name, current, max }] — enemy HP tracker
   nextHpId:         1,
+  playerFiles:      [],      // Subset of files where frontmatter.type === 'player'
+  playerHpLive:     {},      // { [slug]: currentHp } — live from Firebase
   backgroundDone:   false,   // True once background content load is complete
+  _fbUnsub:         null,    // Firebase listener unsubscribe
 };
 
 // =====================================================
@@ -187,9 +203,10 @@ async function backgroundLoadAllContent(files) {
   state.backgroundDone = true;
   setSearchEnabled(true);
 
-  // Rebuild sidebar now that real frontmatter is available
+  // Rebuild sidebar and player panel now that real frontmatter is available
   buildSidebar(state.files);
   restoreActiveNavItem();
+  renderPlayerPanel(state.files);
 }
 
 /**
@@ -1050,6 +1067,102 @@ function doSearch(query) {
 }
 
 // =====================================================
+// PLAYER PANEL
+// =====================================================
+
+/**
+ * Renders the player panel in the bottom bar.
+ * Shows each player's name, stats, and HP (current live from Firebase / max calculated).
+ *
+ * @param {Array} files - All loaded file objects
+ */
+function renderPlayerPanel(files) {
+  state.playerFiles = files
+    .filter(f => isPlayerFile(f))
+    .sort((a, b) => (a.frontmatter.name || a.path).toLowerCase()
+      .localeCompare((b.frontmatter.name || b.path).toLowerCase()));
+
+  const body       = document.getElementById('player-panel-body');
+  const levelLabel = document.getElementById('player-panel-level-label');
+
+  if (state.playerFiles.length === 0) {
+    body.innerHTML = '<span class="hp-empty">No player files found.</span>';
+    return;
+  }
+
+  const anyLevel = state.playerFiles.map(f => f.frontmatter.level).find(l => l);
+  levelLabel.textContent = anyLevel ? `Party — Level ${anyLevel}` : 'Party';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'player-cards';
+
+  for (const pf of state.playerFiles) {
+    const fm   = pf.frontmatter;
+    const slug = pf.path.split('/players/')[1]?.split('/')[0] || '';
+    const maxHp = fm.level && fm.might ? (fm.level + fm.might) * 2 : '?';
+    const liveHp = state.playerHpLive[slug];
+    const currentHp = liveHp !== undefined ? liveHp : (fm.hp_current !== undefined ? fm.hp_current : maxHp);
+
+    const card = document.createElement('div');
+    card.className      = 'player-card';
+    card.dataset.slug   = slug;
+    card.innerHTML = `
+      <div class="player-card-name" title="${escapeHtml(fm.name || '')}">${escapeHtml(fm.name || filenameLabel(pf.path))}</div>
+      ${fm.player ? `<div class="player-card-player">(${escapeHtml(fm.player)})</div>` : ''}
+      <div class="player-card-stats">
+        <div class="stat-block"><span class="stat-label">MIG</span><span class="stat-value">${escapeHtml(String(fm.might   || '–'))}</span></div>
+        <div class="stat-block"><span class="stat-label">FIN</span><span class="stat-value">${escapeHtml(String(fm.finesse || '–'))}</span></div>
+        <div class="stat-block"><span class="stat-label">MND</span><span class="stat-value">${escapeHtml(String(fm.mind    || '–'))}</span></div>
+      </div>
+      <div class="player-card-hp">
+        <span class="player-hp-label">HP</span>
+        <span class="player-hp-current" id="php-${escapeHtml(slug)}">${escapeHtml(String(currentHp))}</span>
+        <span class="player-hp-sep">/</span>
+        <span class="player-hp-max">${escapeHtml(String(maxHp))}</span>
+      </div>
+    `;
+    wrap.appendChild(card);
+  }
+
+  body.innerHTML = '';
+  body.appendChild(wrap);
+}
+
+/**
+ * Patches live HP values into already-rendered player cards without a full re-render.
+ * Called whenever Firebase pushes an update.
+ */
+function updatePlayerHpDisplay() {
+  for (const [slug, hp] of Object.entries(state.playerHpLive)) {
+    const el = document.getElementById(`php-${slug}`);
+    if (el) el.textContent = String(hp);
+  }
+}
+
+/**
+ * Subscribes to Firebase for live player HP updates.
+ * Re-subscribes whenever a new campaign is loaded.
+ *
+ * @param {string} campaignId
+ */
+function subscribePlayerHp(campaignId) {
+  if (state._fbUnsub) { state._fbUnsub(); state._fbUnsub = null; }
+
+  const sessionRef = ref(_db, `${firebaseCampaignPath(campaignId)}/session`);
+  state._fbUnsub   = onValue(sessionRef, (snapshot) => {
+    const data = snapshot.val() || {};
+    // data is { [slug]: { hp_current: N, ... } }
+    state.playerHpLive = {};
+    for (const [slug, playerData] of Object.entries(data)) {
+      if (typeof playerData?.hp_current === 'number') {
+        state.playerHpLive[slug] = playerData.hp_current;
+      }
+    }
+    updatePlayerHpDisplay();
+  });
+}
+
+// =====================================================
 // HP TRACKER
 // =====================================================
 
@@ -1244,6 +1357,8 @@ async function loadCampaign(campaign) {
 
   buildSidebar(state.files);
   renderHpBar();
+  renderPlayerPanel(state.files);
+  subscribePlayerHp(campaign.id);
 
   document.getElementById('content-view').innerHTML = `
     <div class="empty-state">
@@ -1436,6 +1551,14 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('hp-bar'),
     120, 48
   );
+  makeColResizer(
+    document.getElementById('hp-col-resizer'),
+    document.getElementById('hp-tracker-pane'),
+    document.getElementById('player-panel'),
+    document.getElementById('hp-bar'),
+    180, 130
+  );
+
   // Search
   const searchInput = document.getElementById('search-input');
   searchInput.addEventListener('input', (e) => doSearch(e.target.value));

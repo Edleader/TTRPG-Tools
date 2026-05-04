@@ -280,6 +280,9 @@ function renderHp() {
 function adjustHp(delta) {
   state.currentHp = Math.max(0, Math.min(state.maxHp, state.currentHp + delta));
   renderHp();
+  // Push to Firebase immediately so the DM sees it live
+  set(ref(db, `${firebasePlayerPath(state.campaignId, state.characterSlug)}/hp_current`),
+    state.currentHp).catch(e => console.warn('Firebase HP write failed:', e));
   scheduleHpSave();
 }
 
