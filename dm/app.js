@@ -1305,11 +1305,22 @@ function subscribePlayerHp(campaignId) {
 /**
  * Adds an enemy to the HP tracker.
  *
- * @param {string} name  - Enemy name
- * @param {number} maxHp - Maximum HP
+ * @param {string} name      - Enemy name
+ * @param {number} maxHp     - Maximum HP
+ * @param {string} [attack]  - Damage string, e.g. "2+d4 (bat)"
+ * @param {string} [roll]    - Target number to roll under, e.g. "13"
+ * @param {string} [abilities] - Pipe-delimited "Name|Description" ability string(s)
  */
-function addHpEntry(name, maxHp) {
-  state.hpEntries.push({ id: state.nextHpId++, name, max: maxHp, current: maxHp });
+function addHpEntry(name, maxHp, attack = '', roll = '', abilities = '') {
+  state.hpEntries.push({
+    id: state.nextHpId++,
+    name,
+    max:       maxHp,
+    current:   maxHp,
+    attack:    attack    || '',
+    roll:      roll      || '',
+    abilities: abilities || '',
+  });
   renderHpBar();
 }
 
@@ -1354,21 +1365,87 @@ function renderHpBar() {
     const card = document.createElement('div');
     card.className  = 'hp-entry';
     card.dataset.id = entry.id;
-    card.innerHTML  = `
-      <div class="hp-entry-name" title="${escapeHtml(entry.name)}">${escapeHtml(entry.name)}</div>
+
+    // Build stat line: attack and roll info
+    const statsHtml = (entry.attack || entry.roll) ? `
+      <div class="hp-entry-stats">
+        ${entry.attack ? `<span class="hp-entry-stat"><span class="hp-stat-label">ATK</span> ${escapeHtml(entry.attack)}</span>` : ''}
+        ${entry.roll   ? `<span class="hp-entry-stat"><span class="hp-stat-label">ROLL</span> &lt;${escapeHtml(entry.roll)}</span>` : ''}
+      </div>` : '';
+
+    // Build abilities line — each ability is "Name|Desc", pipe-separated between abilities by semicolon
+    let abilitiesHtml = '';
+    if (entry.abilities) {
+      const abilityItems = entry.abilities.split(';').map(a => a.trim()).filter(Boolean);
+      const pills = abilityItems.map(ab => {
+        const pipeIdx = ab.indexOf('|');
+        const abName  = pipeIdx > -1 ? ab.slice(0, pipeIdx).trim() : ab;
+        const abDesc  = pipeIdx > -1 ? ab.slice(pipeIdx + 1).trim() : '';
+        const encoded = encodeURIComponent(JSON.stringify({ name: abName, desc: abDesc }));
+        return `<span class="hp-ability-pill has-tooltip" data-ability="${escapeHtml(encoded)}">${escapeHtml(abName)}</span>`;
+      }).join('');
+      abilitiesHtml = `<div class="hp-entry-abilities">${pills}</div>`;
+    }
+
+    card.innerHTML = `
+      <div class="hp-entry-header">
+        <span class="hp-entry-name" title="${escapeHtml(entry.name)}">${escapeHtml(entry.name)}</span>
+        <button class="btn btn-danger btn-xs hp-entry-remove" data-action="remove" data-id="${entry.id}" title="Remove">&#10005;</button>
+      </div>
+      ${statsHtml}
+      ${abilitiesHtml}
       <div class="hp-controls">
         <button class="btn btn-secondary btn-xs" data-action="minus1" data-id="${entry.id}">−</button>
         <span class="hp-values">${entry.current} / ${entry.max}</span>
         <button class="btn btn-secondary btn-xs" data-action="plus1"  data-id="${entry.id}">+</button>
         <input  type="number" class="hp-custom-input" min="1" placeholder="amt"
-                data-hp-input="${entry.id}" style="width:3.5rem">
+                data-hp-input="${entry.id}">
         <button class="btn btn-secondary btn-xs" data-action="custom-dmg"  data-id="${entry.id}">Dmg</button>
         <button class="btn btn-secondary btn-xs" data-action="custom-heal" data-id="${entry.id}">Heal</button>
-        <button class="btn btn-danger    btn-xs" data-action="remove"      data-id="${entry.id}">&#10005;</button>
       </div>
     `;
     container.appendChild(card);
   }
+
+  // Wire ability tooltips
+  container.querySelectorAll('.has-tooltip').forEach(el => {
+    el.addEventListener('mouseenter', showAbilityTooltip);
+    el.addEventListener('mousemove',  moveAbilityTooltip);
+    el.addEventListener('mouseleave', hideAbilityTooltip);
+  });
+}
+
+let _abilityTooltipEl = null;
+
+function getAbilityTooltip() {
+  if (!_abilityTooltipEl) {
+    _abilityTooltipEl = document.createElement('div');
+    _abilityTooltipEl.className = 'perk-tooltip';
+    _abilityTooltipEl.style.display = 'none';
+    document.body.appendChild(_abilityTooltipEl);
+  }
+  return _abilityTooltipEl;
+}
+
+function showAbilityTooltip(e) {
+  let data;
+  try { data = JSON.parse(decodeURIComponent(e.currentTarget.dataset.ability)); } catch { return; }
+  const tip = getAbilityTooltip();
+  tip.innerHTML = `<strong>${escapeHtml(data.name)}</strong>${data.desc
+    ? escapeHtml(data.desc)
+    : '<em style="color:var(--text-faint)">No description.</em>'}`;
+  tip.style.display = 'block';
+  positionTooltip(tip, e);
+}
+
+function moveAbilityTooltip(e) {
+  const tip = getAbilityTooltip();
+  if (tip.style.display === 'none') return;
+  positionTooltip(tip, e);
+}
+
+function hideAbilityTooltip() {
+  getAbilityTooltip().style.display = 'none';
 }
 
 // =====================================================
@@ -1396,7 +1473,7 @@ function closeAddEnemyModal() {
 }
 
 /**
- * Rebuilds the enemy rows inside the modal from an array of { name, hp }.
+ * Rebuilds the enemy rows inside the modal from an array of { name, hp, attack, roll, abilities }.
  */
 function buildEnemyRows(rows) {
   const container = document.getElementById('enemy-rows');
@@ -1406,8 +1483,11 @@ function buildEnemyRows(rows) {
     div.className = 'enemy-row';
     div.innerHTML = `
       <span class="enemy-row-num">${i + 1}</span>
-      <input class="enemy-row-name" type="text"   placeholder="Name"   value="${escapeHtml(row.name || '')}" autocomplete="off">
-      <input class="enemy-row-hp"   type="number" placeholder="Max HP" value="${row.hp || ''}" min="1" style="width:5rem">
+      <input class="enemy-row-name"      type="text"   placeholder="Name"        value="${escapeHtml(row.name      || '')}" autocomplete="off">
+      <input class="enemy-row-hp"        type="number" placeholder="HP"          value="${row.hp        || ''}" min="1">
+      <input class="enemy-row-attack"    type="text"   placeholder="Attack dmg"  value="${escapeHtml(row.attack    || '')}" autocomplete="off">
+      <input class="enemy-row-roll"      type="text"   placeholder="Roll &lt;"   value="${escapeHtml(row.roll      || '')}" autocomplete="off">
+      <input class="enemy-row-abilities" type="text"   placeholder="Abilities (Name|Desc; …)" value="${escapeHtml(row.abilities || '')}" autocomplete="off">
     `;
     container.appendChild(div);
   });
@@ -1420,8 +1500,11 @@ function syncEnemyRowCount() {
   const count = Math.max(1, Math.min(20, parseInt(document.getElementById('enemy-modal-count').value) || 1));
   const container = document.getElementById('enemy-rows');
   const existing  = Array.from(container.querySelectorAll('.enemy-row')).map(row => ({
-    name: row.querySelector('.enemy-row-name').value,
-    hp:   row.querySelector('.enemy-row-hp').value,
+    name:      row.querySelector('.enemy-row-name').value,
+    hp:        row.querySelector('.enemy-row-hp').value,
+    attack:    (row.querySelector('.enemy-row-attack')    || {}).value || '',
+    roll:      (row.querySelector('.enemy-row-roll')      || {}).value || '',
+    abilities: (row.querySelector('.enemy-row-abilities') || {}).value || '',
   }));
   // Grow or shrink
   while (existing.length < count) existing.push({ name: '', hp: '' });
@@ -1437,10 +1520,13 @@ function confirmAddEnemies() {
   const rows = Array.from(container.querySelectorAll('.enemy-row'));
   let added = 0;
   for (const row of rows) {
-    const name = row.querySelector('.enemy-row-name').value.trim();
-    const hp   = parseInt(row.querySelector('.enemy-row-hp').value);
+    const name      = row.querySelector('.enemy-row-name').value.trim();
+    const hp        = parseInt(row.querySelector('.enemy-row-hp').value);
+    const attack    = (row.querySelector('.enemy-row-attack')    || {}).value?.trim() || '';
+    const roll      = (row.querySelector('.enemy-row-roll')      || {}).value?.trim() || '';
+    const abilities = (row.querySelector('.enemy-row-abilities') || {}).value?.trim() || '';
     if (!name || !hp || hp < 1) continue;
-    addHpEntry(name, hp);
+    addHpEntry(name, hp, attack, roll, abilities);
     added++;
   }
   if (added === 0) { alert('Please fill in at least one enemy name and HP.'); return; }
@@ -1452,23 +1538,29 @@ function confirmAddEnemies() {
 // =====================================================
 
 /**
- * Expands a single encounter's enemies list into flat { name, hp } rows,
- * honouring the `count` field.
+ * Expands a single encounter's enemies list into flat modal-row objects,
+ * honouring the `count` field and carrying attack/roll/abilities through.
  *
- * @param {Array} enemyList - [{ name, hp, count }]
- * @returns {Array} [{ name, hp }]
+ * @param {Array} enemyList - [{ name, hp, count, attack, roll, abilities }]
+ * @returns {Array} [{ name, hp, attack, roll, abilities }]
  */
 function expandEnemyList(enemyList) {
   if (!Array.isArray(enemyList)) return [];
   return enemyList.flatMap(item => {
     if (typeof item !== 'object') return [];
-    const name  = String(item.name || '').trim();
-    const hp    = parseInt(item.hp) || 0;
-    const count = parseInt(item.count) || 1;
+    const name      = String(item.name || '').trim();
+    const hp        = parseInt(item.hp) || 0;
+    const count     = parseInt(item.count) || 1;
+    const attack    = String(item.attack    || '').trim();
+    const roll      = item.roll != null ? String(item.roll).trim() : '';
+    const abilities = String(item.abilities || '').trim();
     if (!name || hp < 1) return [];
     return Array.from({ length: count }, (_, i) => ({
       name: count > 1 ? `${name} ${i + 1}` : name,
       hp,
+      attack,
+      roll,
+      abilities,
     }));
   });
 }

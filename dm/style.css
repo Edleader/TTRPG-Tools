@@ -1286,8 +1286,8 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  min-width: 160px;
-  max-width: 180px;
+  min-width: 200px;
+  max-width: 240px;
   background: var(--panel-bg);
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -1295,13 +1295,69 @@ html, body {
   flex-shrink: 0;
 }
 
+.hp-entry-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .hp-entry-name {
-  font-size: 0.75rem;
+  font-size: 0.78rem;
   font-weight: 600;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
+}
+
+.hp-entry-remove {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  font-size: 0.65rem;
+  line-height: 1;
+}
+
+.hp-entry-stats {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.hp-entry-stat {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.hp-stat-label {
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  margin-right: 2px;
+}
+
+.hp-entry-abilities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.hp-ability-pill {
+  font-size: 0.62rem;
+  padding: 1px 5px;
+  border-radius: 8px;
+  border: 1px solid var(--accent-dim);
+  color: var(--accent);
+  cursor: help;
+  white-space: nowrap;
+  transition: background 0.1s;
+}
+
+.hp-ability-pill:hover {
+  background: rgba(201, 168, 76, 0.15);
 }
 
 .hp-bar-visual {
@@ -1330,11 +1386,16 @@ html, body {
 }
 
 .hp-controls .btn-xs {
-  padding: 1px 5px;
+  padding: 1px 6px;
   font-size: 0.7rem;
-  flex: 1;
+  flex-shrink: 0;
   justify-content: center;
   text-align: center;
+}
+
+.hp-controls .hp-custom-input {
+  width: 3rem;
+  flex-shrink: 0;
 }
 
 .hp-empty {
@@ -1547,15 +1608,15 @@ html, body {
 .enemy-rows::-webkit-scrollbar-thumb { background: var(--border-light); }
 
 .enemy-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1.2rem 1fr 4rem 1fr 3.5rem 1fr;
+  gap: 6px;
   align-items: center;
-  gap: 8px;
 }
 
 .enemy-row-num {
   font-size: 0.72rem;
   color: var(--text-faint);
-  min-width: 1.2rem;
   text-align: right;
 }
 
@@ -1563,19 +1624,20 @@ html, body {
   background: var(--bg);
   border: 1px solid var(--border-light);
   color: var(--text);
-  padding: 5px 10px;
-  font-size: 0.83rem;
+  padding: 5px 8px;
+  font-size: 0.82rem;
   font-family: var(--font-ui);
   border-radius: 3px;
   outline: none;
+  min-width: 0;
 }
 
 .enemy-row input:focus {
   border-color: var(--accent-dim);
 }
 
-.enemy-row-name {
-  flex: 1;
+.enemy-row-abilities {
+  grid-column: 2 / -1;
 }
 
 .add-enemy-actions {

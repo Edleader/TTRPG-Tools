@@ -8,9 +8,16 @@ players_level: 1
 combat:
   - label: The Scavengers (fuel station)
     enemies:
-      - name: Scavenger
+      - name: Scavenger A
         hp: 15
-        count: 2
+        count: 1
+        attack: 1+d4 (kitchen knife)
+        roll: 11
+      - name: Scavenger B
+        hp: 15
+        count: 1
+        attack: 2+d4 (crowbar, reach 1m)
+        roll: 11
 ---
 
 # Arc 1, Chapter 2 — Charlotte / The Fuel Run

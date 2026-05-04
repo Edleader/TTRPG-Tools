@@ -12,14 +12,21 @@ combat:
       - name: Scavenger
         hp: 20
         count: 3
+        attack: d4 (punch x2)
+        roll: 13
   - label: The Gang (travel home)
     enemies:
       - name: Gang Member
         hp: 20
         count: 4
+        attack: 2+d4 (baseball bat)
+        roll: 13
       - name: Gang Leader
         hp: 25
         count: 1
+        attack: 2+d6 (axe)
+        roll: 14
+        abilities: Focussed Disarm|On a hit, target must roll Finesse or drop their weapon.
 ---
 
 # Arc 1, Chapter 1 — The Supply Run
