@@ -83,33 +83,32 @@ export function firebaseCampaignPath(campaignId) {
 /**
  * Full level 1–20 progression table.
  * active_slots / hand_slots: total slots at this level (not the delta).
- * stat_points_gained: extra points the player gets to distribute on reaching this level
- *   (0 at level 1 — starting stats are handled at character creation).
- *   NOTE: The stat point schedule is set to +2 per level as a placeholder.
- *   Update these values if the actual schedule differs.
+ * stat_points_gained: extra stat points the player gets to distribute on reaching this level.
+ *   Level 1 = 0 (36 starting points handled at character creation).
+ *   +1 point at levels 3, 6, 9, 12, 15, 18 — total 6 extra, giving 42 points at level 18+.
  * perk_tier: null = no perk this level; 5/10/17 = which perk tier is unlocked.
  */
 export const LEVEL_TABLE = [
   { level:  1, active_slots: 4, hand_slots: 4, stat_points_gained: 0,  perk_tier: null },
-  { level:  2, active_slots: 5, hand_slots: 4, stat_points_gained: 2,  perk_tier: null },
-  { level:  3, active_slots: 5, hand_slots: 4, stat_points_gained: 2,  perk_tier: null },
-  { level:  4, active_slots: 5, hand_slots: 5, stat_points_gained: 2,  perk_tier: null },
-  { level:  5, active_slots: 5, hand_slots: 5, stat_points_gained: 2,  perk_tier: 5    },
-  { level:  6, active_slots: 5, hand_slots: 5, stat_points_gained: 2,  perk_tier: null },
-  { level:  7, active_slots: 6, hand_slots: 5, stat_points_gained: 2,  perk_tier: null },
-  { level:  8, active_slots: 6, hand_slots: 6, stat_points_gained: 2,  perk_tier: null },
-  { level:  9, active_slots: 6, hand_slots: 6, stat_points_gained: 2,  perk_tier: null },
-  { level: 10, active_slots: 6, hand_slots: 6, stat_points_gained: 2,  perk_tier: 10   },
-  { level: 11, active_slots: 7, hand_slots: 6, stat_points_gained: 2,  perk_tier: null },
-  { level: 12, active_slots: 7, hand_slots: 6, stat_points_gained: 2,  perk_tier: null },
-  { level: 13, active_slots: 7, hand_slots: 7, stat_points_gained: 2,  perk_tier: null },
-  { level: 14, active_slots: 8, hand_slots: 7, stat_points_gained: 2,  perk_tier: null },
-  { level: 15, active_slots: 8, hand_slots: 7, stat_points_gained: 2,  perk_tier: null },
-  { level: 16, active_slots: 8, hand_slots: 8, stat_points_gained: 2,  perk_tier: null },
-  { level: 17, active_slots: 8, hand_slots: 8, stat_points_gained: 2,  perk_tier: 17   },
-  { level: 18, active_slots: 8, hand_slots: 8, stat_points_gained: 2,  perk_tier: null },
-  { level: 19, active_slots: 9, hand_slots: 8, stat_points_gained: 2,  perk_tier: null },
-  { level: 20, active_slots: 9, hand_slots: 9, stat_points_gained: 2,  perk_tier: null },
+  { level:  2, active_slots: 5, hand_slots: 4, stat_points_gained: 0,  perk_tier: null },
+  { level:  3, active_slots: 5, hand_slots: 4, stat_points_gained: 1,  perk_tier: null },
+  { level:  4, active_slots: 5, hand_slots: 5, stat_points_gained: 0,  perk_tier: null },
+  { level:  5, active_slots: 5, hand_slots: 5, stat_points_gained: 0,  perk_tier: 5    },
+  { level:  6, active_slots: 5, hand_slots: 5, stat_points_gained: 1,  perk_tier: null },
+  { level:  7, active_slots: 6, hand_slots: 5, stat_points_gained: 0,  perk_tier: null },
+  { level:  8, active_slots: 6, hand_slots: 6, stat_points_gained: 0,  perk_tier: null },
+  { level:  9, active_slots: 6, hand_slots: 6, stat_points_gained: 1,  perk_tier: null },
+  { level: 10, active_slots: 6, hand_slots: 6, stat_points_gained: 0,  perk_tier: 10   },
+  { level: 11, active_slots: 7, hand_slots: 6, stat_points_gained: 0,  perk_tier: null },
+  { level: 12, active_slots: 7, hand_slots: 6, stat_points_gained: 1,  perk_tier: null },
+  { level: 13, active_slots: 7, hand_slots: 7, stat_points_gained: 0,  perk_tier: null },
+  { level: 14, active_slots: 8, hand_slots: 7, stat_points_gained: 0,  perk_tier: null },
+  { level: 15, active_slots: 8, hand_slots: 7, stat_points_gained: 1,  perk_tier: null },
+  { level: 16, active_slots: 8, hand_slots: 8, stat_points_gained: 0,  perk_tier: null },
+  { level: 17, active_slots: 8, hand_slots: 8, stat_points_gained: 0,  perk_tier: 17   },
+  { level: 18, active_slots: 8, hand_slots: 8, stat_points_gained: 1,  perk_tier: null },
+  { level: 19, active_slots: 9, hand_slots: 8, stat_points_gained: 0,  perk_tier: null },
+  { level: 20, active_slots: 9, hand_slots: 9, stat_points_gained: 0,  perk_tier: null },
 ];
 
 /**
