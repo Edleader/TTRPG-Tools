@@ -65,6 +65,7 @@ const state = {
   playerHpLive:        {},   // { [slug]: currentHp } — live from Firebase
   playerRestRequests:  {},   // { [slug]: { type, status, requestedAt } } — pending rests
   sessionActive:    false,   // Whether the DM has started the session
+  autoApproveRests: false,   // When true, rest requests are approved instantly
   backgroundDone:   false,   // True once background content load is complete
   _fbUnsub:         null,    // Firebase listener unsubscribe
 };
@@ -614,6 +615,8 @@ async function openFile(fileObj) {
     state.dmNotesFile = null;
   }
 
+  maybeRenderCombatSetup(fileObj);
+
   // Fade in new content
   const contentView = document.getElementById('content-view');
   contentView.classList.add('fading');
@@ -1095,6 +1098,13 @@ function renderPlayerPanel(files) {
   const anyLevel = state.playerFiles.map(f => f.frontmatter.level).find(l => l);
   levelLabel.textContent = anyLevel ? `Party — Level ${anyLevel}` : 'Party';
 
+  // Keep auto-approve toggle state in sync
+  const toggleBtn = document.getElementById('btn-auto-approve');
+  if (toggleBtn) {
+    toggleBtn.textContent  = state.autoApproveRests ? 'Auto-Rest: ON' : 'Auto-Rest: OFF';
+    toggleBtn.classList.toggle('auto-approve-on', state.autoApproveRests);
+  }
+
   const wrap = document.createElement('div');
   wrap.className = 'player-cards';
 
@@ -1278,6 +1288,10 @@ function subscribePlayerHp(campaignId) {
       }
       if (playerData?.rest_request) {
         state.playerRestRequests[slug] = playerData.rest_request;
+        // Auto-approve if toggle is on and request is still pending
+        if (state.autoApproveRests && playerData.rest_request.status === 'pending') {
+          approveRestRequest(slug);
+        }
       }
     }
     updatePlayerHpDisplay();
@@ -1355,6 +1369,161 @@ function renderHpBar() {
     `;
     container.appendChild(card);
   }
+}
+
+// =====================================================
+// ADD ENEMY MODAL
+// =====================================================
+
+/**
+ * Opens the batch enemy creation modal.
+ * Pre-fills a given list of enemies if provided (e.g. from a combat block).
+ *
+ * @param {Array} [prefill] - [{ name, hp }] optional pre-filled rows
+ */
+function openAddEnemyModal(prefill) {
+  const modal = document.getElementById('add-enemy-modal');
+  modal.style.display = '';
+  buildEnemyRows(prefill || [{ name: '', hp: '' }]);
+  document.getElementById('enemy-modal-count').value = prefill ? prefill.length : 1;
+  // Focus first name input
+  const first = modal.querySelector('.enemy-row-name');
+  if (first) first.focus();
+}
+
+function closeAddEnemyModal() {
+  document.getElementById('add-enemy-modal').style.display = 'none';
+}
+
+/**
+ * Rebuilds the enemy rows inside the modal from an array of { name, hp }.
+ */
+function buildEnemyRows(rows) {
+  const container = document.getElementById('enemy-rows');
+  container.innerHTML = '';
+  rows.forEach((row, i) => {
+    const div = document.createElement('div');
+    div.className = 'enemy-row';
+    div.innerHTML = `
+      <span class="enemy-row-num">${i + 1}</span>
+      <input class="enemy-row-name" type="text"   placeholder="Name"   value="${escapeHtml(row.name || '')}" autocomplete="off">
+      <input class="enemy-row-hp"   type="number" placeholder="Max HP" value="${row.hp || ''}" min="1" style="width:5rem">
+    `;
+    container.appendChild(div);
+  });
+}
+
+/**
+ * Reads the count input and resizes the rows list accordingly.
+ */
+function syncEnemyRowCount() {
+  const count = Math.max(1, Math.min(20, parseInt(document.getElementById('enemy-modal-count').value) || 1));
+  const container = document.getElementById('enemy-rows');
+  const existing  = Array.from(container.querySelectorAll('.enemy-row')).map(row => ({
+    name: row.querySelector('.enemy-row-name').value,
+    hp:   row.querySelector('.enemy-row-hp').value,
+  }));
+  // Grow or shrink
+  while (existing.length < count) existing.push({ name: '', hp: '' });
+  existing.length = count;
+  buildEnemyRows(existing);
+}
+
+/**
+ * Confirms the modal: adds all filled rows to the HP tracker.
+ */
+function confirmAddEnemies() {
+  const container = document.getElementById('enemy-rows');
+  const rows = Array.from(container.querySelectorAll('.enemy-row'));
+  let added = 0;
+  for (const row of rows) {
+    const name = row.querySelector('.enemy-row-name').value.trim();
+    const hp   = parseInt(row.querySelector('.enemy-row-hp').value);
+    if (!name || !hp || hp < 1) continue;
+    addHpEntry(name, hp);
+    added++;
+  }
+  if (added === 0) { alert('Please fill in at least one enemy name and HP.'); return; }
+  closeAddEnemyModal();
+}
+
+// =====================================================
+// COMBAT SETUP FROM CHAPTER FRONTMATTER
+// =====================================================
+
+/**
+ * Parses a simple YAML list from a string value in frontmatter.
+ * Handles both inline YAML lists and multi-line block lists.
+ * Each item must have name and hp fields.
+ *
+ * @param {*} raw - The raw value from parseFrontmatter for the 'combat' key
+ * @returns {Array} [{ name, hp, count }]
+ */
+function parseCombatBlock(raw) {
+  if (!raw) return [];
+  // parseFrontmatter may return it as a string or array depending on YAML structure.
+  // We handle both cases.
+  if (Array.isArray(raw)) {
+    return raw.flatMap(item => {
+      if (typeof item !== 'object') return [];
+      const name  = String(item.name  || '').trim();
+      const hp    = parseInt(item.hp)  || 0;
+      const count = parseInt(item.count) || 1;
+      if (!name || hp < 1) return [];
+      return Array.from({ length: count }, (_, i) => ({
+        name: count > 1 ? `${name} ${i + 1}` : name,
+        hp,
+      }));
+    });
+  }
+  // Fallback: try to parse as a YAML-style string
+  if (typeof raw === 'string') {
+    const entries = [];
+    const re = /[-\s]*name:\s*(.+?)\s*\n\s*hp:\s*(\d+)(?:\s*\n\s*count:\s*(\d+))?/gi;
+    let m;
+    while ((m = re.exec(raw)) !== null) {
+      const name  = m[1].trim();
+      const hp    = parseInt(m[2]);
+      const count = parseInt(m[3]) || 1;
+      for (let i = 0; i < count; i++) {
+        entries.push({ name: count > 1 ? `${name} ${i + 1}` : name, hp });
+      }
+    }
+    return entries;
+  }
+  return [];
+}
+
+/**
+ * Renders a "Set up combat" button bar into the content view when the open file
+ * has a combat frontmatter block.
+ */
+function maybeRenderCombatSetup(fileObj) {
+  const existing = document.getElementById('combat-setup-bar');
+  if (existing) existing.remove();
+
+  const enemies = parseCombatBlock(fileObj.frontmatter.combat);
+  if (!enemies.length) return;
+
+  const bar = document.createElement('div');
+  bar.id = 'combat-setup-bar';
+  bar.className = 'combat-setup-bar';
+
+  const label = document.createElement('span');
+  label.className = 'combat-setup-label';
+  label.textContent = `Combat: ${enemies.length} enem${enemies.length === 1 ? 'y' : 'ies'} in this chapter`;
+
+  const btn = document.createElement('button');
+  btn.className = 'btn btn-sm';
+  btn.textContent = 'Set up combat';
+  btn.addEventListener('click', () => openAddEnemyModal(enemies));
+
+  bar.appendChild(label);
+  bar.appendChild(btn);
+
+  // Insert just above the content view
+  const contentView = document.getElementById('content-view');
+  contentView.parentNode.insertBefore(bar, contentView);
 }
 
 // =====================================================
@@ -1706,14 +1875,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  document.getElementById('btn-add-enemy').addEventListener('click', () => {
-    const name = prompt('Enemy name:');
-    if (!name || !name.trim()) return;
-    const maxStr = prompt('Max HP:');
-    const max    = parseInt(maxStr);
-    if (!max || max < 1) { alert('Please enter a valid HP number.'); return; }
-    addHpEntry(name.trim(), max);
-  });
+  document.getElementById('btn-add-enemy').addEventListener('click', () => openAddEnemyModal());
+
 
   document.getElementById('btn-clear-hp').addEventListener('click', () => {
     if (state.hpEntries.length === 0) return;
@@ -1724,6 +1887,20 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('player-panel-body').addEventListener('click', (e) => {
     const btn = e.target.closest('.rest-approve-btn');
     if (btn) approveRestRequest(btn.dataset.slug);
+  });
+
+  // Auto-approve rest toggle
+  document.getElementById('btn-auto-approve').addEventListener('click', () => {
+    state.autoApproveRests = !state.autoApproveRests;
+    const btn = document.getElementById('btn-auto-approve');
+    btn.textContent = state.autoApproveRests ? 'Auto-Rest: ON' : 'Auto-Rest: OFF';
+    btn.classList.toggle('auto-approve-on', state.autoApproveRests);
+    // If just turned on, immediately approve any pending requests
+    if (state.autoApproveRests) {
+      for (const [slug, req] of Object.entries(state.playerRestRequests)) {
+        if (req.status === 'pending') approveRestRequest(slug);
+      }
+    }
   });
 
   // Session toggle button
@@ -1777,6 +1954,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('btn-stay-open').addEventListener('click', () => {
     document.getElementById('close-warning').style.display = 'none';
+  });
+
+  // Add enemy modal
+  document.getElementById('enemy-modal-count').addEventListener('change', syncEnemyRowCount);
+  document.getElementById('enemy-modal-count').addEventListener('input',  syncEnemyRowCount);
+  document.getElementById('btn-enemy-confirm').addEventListener('click',  confirmAddEnemies);
+  document.getElementById('btn-enemy-cancel').addEventListener('click',   closeAddEnemyModal);
+  document.getElementById('add-enemy-modal').addEventListener('click', (e) => {
+    // Close on backdrop click
+    if (e.target === document.getElementById('add-enemy-modal')) closeAddEnemyModal();
   });
 
   init();

@@ -193,25 +193,80 @@ export function parseFrontmatter(raw) {
   const yamlBlock = raw.slice(3, end).trim();
   result._body    = raw.slice(end + 4).trim();
 
-  for (const line of yamlBlock.split('\n')) {
+  const lines = yamlBlock.split('\n');
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
     const colon = line.indexOf(':');
-    if (colon === -1) continue;
+    if (colon === -1) { i++; continue; }
+
     const key = line.slice(0, colon).trim();
     let val   = line.slice(colon + 1).trim();
 
+    if (!key) { i++; continue; }
+
+    // Check if this is a block sequence key (val is empty and next line starts with '  -')
+    if (val === '' && i + 1 < lines.length && /^\s+-\s/.test(lines[i + 1])) {
+      // Collect all indented list items until we hit a non-indented line
+      const items = [];
+      let obj = null;
+      i++;
+      while (i < lines.length && /^\s/.test(lines[i])) {
+        const itemLine = lines[i];
+        const listMatch = itemLine.match(/^\s+-\s*(.*)/);
+        if (listMatch) {
+          if (obj !== null) items.push(obj);
+          obj = {};
+          const propStr = listMatch[1].trim();
+          // May have inline key: value on the same line as the dash
+          if (propStr) {
+            const pc = propStr.indexOf(':');
+            if (pc > -1) {
+              const pk = propStr.slice(0, pc).trim();
+              const pv = coerceYamlValue(propStr.slice(pc + 1).trim());
+              if (pk) obj[pk] = pv;
+            }
+          }
+        } else if (obj !== null) {
+          // Continuation of current object
+          const pc = itemLine.indexOf(':');
+          if (pc > -1) {
+            const pk = itemLine.slice(0, pc).trim();
+            const pv = coerceYamlValue(itemLine.slice(pc + 1).trim());
+            if (pk) obj[pk] = pv;
+          }
+        }
+        i++;
+      }
+      if (obj !== null) items.push(obj);
+      result[key] = items;
+      continue;
+    }
+
+    // Scalar value
     if ((val.startsWith('"') && val.endsWith('"')) ||
         (val.startsWith("'") && val.endsWith("'"))) {
       val = val.slice(1, -1);
+    } else {
+      val = coerceYamlValue(val);
     }
 
-    if (val === 'true')        val = true;
-    else if (val === 'false')  val = false;
-    else if (/^\d+$/.test(val)) val = parseInt(val, 10);
-
-    if (key) result[key] = val;
+    result[key] = val;
+    i++;
   }
 
   return result;
+}
+
+function coerceYamlValue(val) {
+  if (val === 'true')  return true;
+  if (val === 'false') return false;
+  if (/^\d+$/.test(val)) return parseInt(val, 10);
+  if ((val.startsWith('"') && val.endsWith('"')) ||
+      (val.startsWith("'") && val.endsWith("'"))) {
+    return val.slice(1, -1);
+  }
+  return val;
 }
 
 /**

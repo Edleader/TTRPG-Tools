@@ -237,6 +237,7 @@
       <div id="player-panel">
         <div class="hp-bar-header">
           <span id="player-panel-level-label">Party</span>
+          <button class="btn btn-sm btn-secondary" id="btn-auto-approve">Auto-Rest: OFF</button>
           <button class="btn btn-sm" id="btn-session-toggle">Start Session</button>
         </div>
         <div id="player-panel-body">
@@ -255,6 +256,24 @@
       <div class="close-warning-actions">
         <button class="btn btn-danger" id="btn-end-and-close">End Session &amp; Close</button>
         <button class="btn btn-secondary" id="btn-stay-open">Stay Open</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Enemy Modal -->
+  <div id="add-enemy-modal" style="display:none" role="dialog" aria-modal="true" aria-label="Add enemies">
+    <div class="add-enemy-card">
+      <div class="add-enemy-header">
+        <span>Add Enemies</span>
+        <div class="add-enemy-count-wrap">
+          <label for="enemy-modal-count">How many?</label>
+          <input id="enemy-modal-count" type="number" min="1" max="20" value="1">
+        </div>
+      </div>
+      <div id="enemy-rows" class="enemy-rows"></div>
+      <div class="add-enemy-actions">
+        <button class="btn btn-secondary btn-sm" id="btn-enemy-cancel">Cancel</button>
+        <button class="btn btn-sm" id="btn-enemy-confirm">Add to Tracker</button>
       </div>
     </div>
   </div>

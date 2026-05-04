@@ -1433,3 +1433,154 @@ html, body {
   margin-right: 6px;
   color: var(--text-faint);
 }
+
+/* =====================================================
+   AUTO-APPROVE TOGGLE
+   ===================================================== */
+
+#btn-auto-approve.auto-approve-on {
+  background: rgba(76, 175, 80, 0.15);
+  border-color: #4caf50;
+  color: #4caf50;
+}
+
+#btn-auto-approve.auto-approve-on:hover {
+  background: #4caf50;
+  color: #1a1a1a;
+}
+
+/* =====================================================
+   COMBAT SETUP BAR
+   ===================================================== */
+
+.combat-setup-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 14px;
+  background: rgba(201, 168, 76, 0.07);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.combat-setup-label {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  flex: 1;
+}
+
+/* =====================================================
+   ADD ENEMY MODAL
+   ===================================================== */
+
+#add-enemy-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.add-enemy-card {
+  background: var(--panel-bg);
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  padding: 20px 24px;
+  min-width: 380px;
+  max-width: 520px;
+  width: 100%;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.add-enemy-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.add-enemy-header > span {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--accent);
+  flex: 1;
+}
+
+.add-enemy-count-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.add-enemy-count-wrap input {
+  width: 4rem;
+  background: var(--bg);
+  border: 1px solid var(--border-light);
+  color: var(--text);
+  padding: 4px 8px;
+  font-size: 0.85rem;
+  border-radius: 3px;
+  outline: none;
+  text-align: center;
+}
+
+.add-enemy-count-wrap input:focus {
+  border-color: var(--accent-dim);
+}
+
+.enemy-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  max-height: 50vh;
+  padding-right: 4px;
+}
+
+.enemy-rows::-webkit-scrollbar { width: 4px; }
+.enemy-rows::-webkit-scrollbar-thumb { background: var(--border-light); }
+
+.enemy-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.enemy-row-num {
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  min-width: 1.2rem;
+  text-align: right;
+}
+
+.enemy-row input {
+  background: var(--bg);
+  border: 1px solid var(--border-light);
+  color: var(--text);
+  padding: 5px 10px;
+  font-size: 0.83rem;
+  font-family: var(--font-ui);
+  border-radius: 3px;
+  outline: none;
+}
+
+.enemy-row input:focus {
+  border-color: var(--accent-dim);
+}
+
+.enemy-row-name {
+  flex: 1;
+}
+
+.add-enemy-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
