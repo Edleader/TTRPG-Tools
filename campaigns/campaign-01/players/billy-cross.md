@@ -7,6 +7,11 @@ might: 10
 finesse: 14
 mind: 12
 playstyle: Ranged Finesse
+pin: 1234
+active_slots: 4
+hand_slots: 4
+swap_lock: locked
+swaps_remaining: 0
 perk_5:
 perk_10:
 perk_17:

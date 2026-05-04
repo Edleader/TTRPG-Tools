@@ -9,44 +9,49 @@
 <body>
 
   <!-- ================================================
-       WELCOME SCREEN
+       LOADING SCREEN
+       Shown on startup while fetching campaigns from GitHub.
        ================================================ -->
-  <div id="welcome-screen">
+  <div id="loading-screen">
     <h1>Almanac</h1>
-    <p>GM reference tool for your campaign</p>
-    <div class="welcome-buttons">
-      <button class="btn" id="btn-open">Open Almanac Folder</button>
-    </div>
-    <p style="font-size:0.75rem; color:#444; margin-top:12px;">
-      Uses the File System Access API — Chrome or Edge required.
-    </p>
+    <p class="loading-message">Connecting to GitHub…</p>
+    <div class="loading-spinner"></div>
+  </div>
+
+  <!-- ================================================
+       ERROR SCREEN
+       Shown if GitHub connection fails (bad token, no campaigns, etc.)
+       ================================================ -->
+  <div id="error-screen" style="display:none">
+    <h1>Almanac</h1>
+    <p class="error-heading">Something went wrong</p>
+    <pre id="error-message" class="error-message"></pre>
+    <button class="btn" onclick="location.reload()">Try Again</button>
   </div>
 
   <!-- ================================================
        CAMPAIGN SELECT SCREEN
+       Shown when multiple campaigns are found in the repo.
        ================================================ -->
   <div id="campaign-select-screen" style="display:none">
     <h1>Select Campaign</h1>
     <p>Choose a campaign to load</p>
     <div id="campaign-list" class="campaign-list"></div>
-    <div style="margin-top:24px;">
-      <button class="btn btn-secondary btn-sm" id="btn-change-root">Change Folder</button>
-    </div>
   </div>
 
   <!-- ================================================
        MAIN APP
+       Hidden until a campaign is loaded.
        ================================================ -->
-  <div id="app">
+  <div id="app" style="display:none">
 
-    <!-- Body: sidebar + main -->
+    <!-- Body: sidebar + main panel -->
     <div class="app-body">
 
       <!-- ============================================
            SIDEBAR
            ============================================ -->
       <nav id="sidebar">
-
 
         <!-- Search box -->
         <div class="sidebar-search-wrap">
@@ -59,10 +64,10 @@
           >
         </div>
 
-        <!-- Normal nav (hidden when searching) -->
+        <!-- Normal nav (hidden during search) -->
         <div id="sidebar-nav"></div>
 
-        <!-- Search results (shown when searching) -->
+        <!-- Search results (shown during search) -->
         <div id="search-results"></div>
 
       </nav>
@@ -75,10 +80,11 @@
            ============================================ -->
       <main id="main-panel">
 
-        <!-- Toolbar: campaign name + file path + actions -->
+        <!-- Toolbar: campaign name, file path, save status, actions -->
         <div class="main-toolbar">
           <span class="campaign-name" id="campaign-name-label"></span>
           <span class="file-path"></span>
+          <span class="save-status" id="save-status"></span>
           <div class="toolbar-actions">
             <button class="btn btn-secondary btn-sm" id="btn-change-campaign">Switch Campaign</button>
           </div>
@@ -87,23 +93,22 @@
         <!-- Character badge (visible when a character file is open) -->
         <div id="character-badge" class="character-badge"></div>
 
-        <!-- Split pane container (view + dm notes, used for arc/chapter files) -->
+        <!-- Split pane: content + DM notes -->
         <div id="split-pane">
 
-          <!-- Left: rendered content OR edit textarea -->
+          <!-- Left pane: rendered markdown or edit textarea -->
           <div id="left-pane">
 
-            <!-- Left pane header: file edit controls + format toolbar -->
             <div class="pane-header" id="left-pane-header">
               <span class="pane-header-label" id="left-pane-label">Content</span>
               <div class="pane-header-actions">
                 <button class="fmt-btn" id="btn-edit">Edit</button>
-                <button class="fmt-btn" id="btn-save" style="display:none">Save</button>
+                <button class="fmt-btn" id="btn-save"   style="display:none">Save</button>
                 <button class="fmt-btn" id="btn-cancel" style="display:none">Cancel</button>
               </div>
             </div>
 
-            <!-- Markdown format toolbar (visible in edit mode) -->
+            <!-- Format toolbar (visible in edit mode) -->
             <div id="format-toolbar">
               <div class="format-toolbar-group">
                 <button class="fmt-btn" data-action="h1" title="Heading 1">H1</button>
@@ -112,16 +117,16 @@
               </div>
               <div class="format-toolbar-sep"></div>
               <div class="format-toolbar-group">
-                <button class="fmt-btn" data-action="bold" title="Bold"><strong>B</strong></button>
-                <button class="fmt-btn" data-action="italic" title="Italic"><em>I</em></button>
+                <button class="fmt-btn" data-action="bold"          title="Bold"><strong>B</strong></button>
+                <button class="fmt-btn" data-action="italic"        title="Italic"><em>I</em></button>
                 <button class="fmt-btn" data-action="strikethrough" title="Strikethrough"><del>S</del></button>
               </div>
               <div class="format-toolbar-sep"></div>
               <div class="format-toolbar-group">
-                <button class="fmt-btn" data-action="ul" title="Bullet list">&#8226; List</button>
-                <button class="fmt-btn" data-action="ol" title="Numbered list">1. List</button>
+                <button class="fmt-btn" data-action="ul"         title="Bullet list">&#8226; List</button>
+                <button class="fmt-btn" data-action="ol"         title="Numbered list">1. List</button>
                 <button class="fmt-btn" data-action="blockquote" title="Blockquote">&ldquo; Quote</button>
-                <button class="fmt-btn" data-action="hr" title="Divider">&#8212; Rule</button>
+                <button class="fmt-btn" data-action="hr"         title="Divider">&#8212; Rule</button>
               </div>
               <div class="format-toolbar-sep"></div>
               <div class="format-toolbar-group">
@@ -147,21 +152,23 @@
                 autocapitalize="off"
               ></textarea>
             </div>
-          </div>
 
-          <!-- Resize handle -->
+          </div><!-- /#left-pane -->
+
+          <!-- Pane resize handle (shown only for arc/chapter files) -->
           <div id="pane-resizer" style="display:none"></div>
 
-          <!-- Right: DM notes -->
+          <!-- Right pane: DM notes (shown only for arc/chapter files) -->
           <div id="right-pane" style="display:none">
+
             <div class="dm-notes-header">
               <span>DM Notes</span>
               <button class="fmt-btn dm-notes-edit-btn" id="btn-dm-edit">Edit</button>
-              <button class="fmt-btn dm-notes-edit-btn" id="btn-dm-save" style="display:none">Save</button>
+              <button class="fmt-btn dm-notes-edit-btn" id="btn-dm-save"   style="display:none">Save</button>
               <button class="fmt-btn dm-notes-edit-btn" id="btn-dm-cancel" style="display:none">Cancel</button>
             </div>
 
-            <!-- DM format toolbar (visible when editing DM notes) -->
+            <!-- DM notes format toolbar (visible when editing DM notes) -->
             <div id="dm-format-toolbar">
               <div class="format-toolbar-group">
                 <button class="fmt-btn" data-pane="dm" data-action="h1" title="Heading 1">H1</button>
@@ -170,16 +177,16 @@
               </div>
               <div class="format-toolbar-sep"></div>
               <div class="format-toolbar-group">
-                <button class="fmt-btn" data-pane="dm" data-action="bold" title="Bold"><strong>B</strong></button>
-                <button class="fmt-btn" data-pane="dm" data-action="italic" title="Italic"><em>I</em></button>
+                <button class="fmt-btn" data-pane="dm" data-action="bold"          title="Bold"><strong>B</strong></button>
+                <button class="fmt-btn" data-pane="dm" data-action="italic"        title="Italic"><em>I</em></button>
                 <button class="fmt-btn" data-pane="dm" data-action="strikethrough" title="Strikethrough"><del>S</del></button>
               </div>
               <div class="format-toolbar-sep"></div>
               <div class="format-toolbar-group">
-                <button class="fmt-btn" data-pane="dm" data-action="ul" title="Bullet list">&#8226; List</button>
-                <button class="fmt-btn" data-pane="dm" data-action="ol" title="Numbered list">1. List</button>
+                <button class="fmt-btn" data-pane="dm" data-action="ul"         title="Bullet list">&#8226; List</button>
+                <button class="fmt-btn" data-pane="dm" data-action="ol"         title="Numbered list">1. List</button>
                 <button class="fmt-btn" data-pane="dm" data-action="blockquote" title="Blockquote">&ldquo; Quote</button>
-                <button class="fmt-btn" data-pane="dm" data-action="hr" title="Divider">&#8212; Rule</button>
+                <button class="fmt-btn" data-pane="dm" data-action="hr"         title="Divider">&#8212; Rule</button>
               </div>
             </div>
 
@@ -191,10 +198,11 @@
                 autocomplete="off"
                 autocorrect="off"
                 autocapitalize="off"
-                placeholder="Add private DM notes here — these are saved alongside the chapter file but only visible in this pane."
+                placeholder="Add private DM notes here — saved as a .dm.md file alongside the chapter."
               ></textarea>
             </div>
-          </div>
+
+          </div><!-- /#right-pane -->
 
         </div><!-- /#split-pane -->
 
@@ -210,11 +218,11 @@
          ================================================ -->
     <div id="hp-bar">
 
-      <!-- Left: HP Tracker (~66% width) -->
+      <!-- Left: HP Tracker -->
       <div id="hp-tracker-pane">
         <div class="hp-bar-header">
           <span>HP Tracker</span>
-          <button class="btn btn-sm" id="btn-add-enemy">+ Add Enemy</button>
+          <button class="btn btn-sm"           id="btn-add-enemy">+ Add Enemy</button>
           <button class="btn btn-secondary btn-sm" id="btn-clear-hp">Clear All</button>
         </div>
         <div class="hp-entries" id="hp-entries">
@@ -222,10 +230,10 @@
         </div>
       </div>
 
-      <!-- Horizontal resizer between HP and Player panel -->
+      <!-- Horizontal resizer -->
       <div id="hp-col-resizer"></div>
 
-      <!-- Right: Player Panel (~33% width) -->
+      <!-- Right: Player Panel -->
       <div id="player-panel">
         <div class="hp-bar-header">
           <span id="player-panel-level-label">Party</span>
@@ -235,10 +243,11 @@
         </div>
       </div>
 
-    </div>
+    </div><!-- /#hp-bar -->
 
   </div><!-- /#app -->
 
-  <script src="app.js"></script>
+  <!-- ES module — must be type="module" to use import/export -->
+  <script type="module" src="app.js"></script>
 </body>
 </html>

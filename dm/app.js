@@ -1,7 +1,39 @@
-/* =====================================================
-   Almanac GM Tool — app.js
-   Vanilla JS, File System Access API, no frameworks
-   ===================================================== */
+/**
+ * app.js — DM Almanac, GitHub-backed edition.
+ *
+ * Reads all campaign files from the GitHub Contents API instead of the local
+ * file system. All existing features are preserved:
+ *   - Sidebar navigation by section
+ *   - Markdown rendering
+ *   - Split-pane DM notes (stored as filename.dm.md in the repo)
+ *   - Inline editing with save back to GitHub
+ *   - Format toolbar
+ *   - Search across all files
+ *   - Character badge
+ *   - HP tracker (enemy combat HP)
+ *   - Player panel (reads player .md files)
+ *   - Campaign selection
+ *
+ * New in this version:
+ *   - Works in any browser (no File System Access API)
+ *   - Hostable on GitHub Pages
+ *   - Campaign data namespaced under campaigns/[id]/
+ */
+
+import {
+  readFile,
+  writeFile,
+  listDirectory,
+  listCampaigns,
+  parseFrontmatter,
+  serialiseFrontmatter,
+  readAllMarkdownFiles,
+} from '../shared/github-api.js';
+
+import {
+  GITHUB_TOKEN_RW,
+  GITHUB_BRANCH,
+} from '../shared/config.js';
 
 'use strict';
 
@@ -10,388 +42,261 @@
 // =====================================================
 
 const state = {
-  rootHandle: null,      // FileSystemDirectoryHandle — the CardBased/ root folder
-  dirHandle: null,       // FileSystemDirectoryHandle — the active campaign folder
-  files: [],             // Array of { path, handle, frontmatter, rawContent }
-  currentFile: null,     // Currently open file object
-  editing: false,        // Edit mode
-  hpEntries: [],         // { id, name, current, max }
-  nextHpId: 1,
-  dmNotesHandle: null,   // FileSystemFileHandle for current file's DM notes
-  dmNotesContent: '',    // Raw DM notes markdown
-  editingDmNotes: false,
-  playerFiles: [],       // Player .md file objects
-  campaigns: [],         // [{ id, name, handle }]
-  activeCampaign: null,  // { id, name, handle }
+  campaigns:      [],      // [{ id, name, path }] — discovered from repo
+  activeCampaign: null,    // { id, name, path }
+  files:          [],      // [{ path, sha, frontmatter, rawContent }] — all .md files for current campaign
+  currentFile:    null,    // Currently open file object
+  editing:        false,   // Main content edit mode active
+  editingDmNotes: false,   // DM notes edit mode active
+  dmNotesFile:    null,    // { path, sha, content } for the current .dm.md file
+  hpEntries:      [],      // [{ id, name, current, max }] — enemy HP tracker
+  nextHpId:       1,
+  playerFiles:    [],      // Subset of files where frontmatter.type === 'player'
 };
 
 // =====================================================
-// INDEXEDDB — persist root directory handle + last campaign
+// GITHUB READS — load all files for a campaign
 // =====================================================
 
-const DB_NAME    = 'almanac-gm';
-const DB_VERSION = 2;
-const STORE_NAME = 'handles';
-
-function openDB() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = (e) => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME);
-      }
-    };
-    req.onsuccess  = (e) => resolve(e.target.result);
-    req.onerror    = (e) => reject(e.target.error);
-  });
-}
-
-async function saveHandleToDB(handle) {
-  const db   = await openDB();
-  const tx   = db.transaction(STORE_NAME, 'readwrite');
-  tx.objectStore(STORE_NAME).put(handle, 'rootHandle');
-  return new Promise((res, rej) => {
-    tx.oncomplete = res;
-    tx.onerror    = (e) => rej(e.target.error);
-  });
-}
-
-async function saveLastCampaignToDB(campaignId) {
-  const db   = await openDB();
-  const tx   = db.transaction(STORE_NAME, 'readwrite');
-  tx.objectStore(STORE_NAME).put(campaignId, 'lastCampaign');
-  return new Promise((res, rej) => {
-    tx.oncomplete = res;
-    tx.onerror    = (e) => rej(e.target.error);
-  });
-}
-
-async function loadHandleFromDB() {
-  const db    = await openDB();
-  const tx    = db.transaction(STORE_NAME, 'readonly');
-  const store = tx.objectStore(STORE_NAME);
-  return new Promise((res, rej) => {
-    const req  = store.get('rootHandle');
-    req.onsuccess = (e) => res(e.target.result || null);
-    req.onerror   = (e) => rej(e.target.error);
-  });
-}
-
-async function loadLastCampaignFromDB() {
-  const db    = await openDB();
-  const tx    = db.transaction(STORE_NAME, 'readonly');
-  const store = tx.objectStore(STORE_NAME);
-  return new Promise((res, rej) => {
-    const req  = store.get('lastCampaign');
-    req.onsuccess = (e) => res(e.target.result || null);
-    req.onerror   = (e) => rej(e.target.error);
-  });
-}
-
-async function clearHandleFromDB() {
-  const db = await openDB();
-  const tx = db.transaction(STORE_NAME, 'readwrite');
-  tx.objectStore(STORE_NAME).delete('rootHandle');
-  tx.objectStore(STORE_NAME).delete('lastCampaign');
-}
-
-// =====================================================
-// FRONTMATTER PARSER
-// =====================================================
-
-function parseFrontmatter(raw) {
-  const result = { _body: raw };
-  if (!raw.startsWith('---')) return result;
-
-  const end = raw.indexOf('\n---', 3);
-  if (end === -1) return result;
-
-  const yamlBlock = raw.slice(3, end).trim();
-  const body      = raw.slice(end + 4).trim();
-  result._body    = body;
-
-  for (const line of yamlBlock.split('\n')) {
-    const colon = line.indexOf(':');
-    if (colon === -1) continue;
-    const key = line.slice(0, colon).trim();
-    let val   = line.slice(colon + 1).trim();
-    if ((val.startsWith('"') && val.endsWith('"')) ||
-        (val.startsWith("'") && val.endsWith("'"))) {
-      val = val.slice(1, -1);
-    }
-    if (key) result[key] = val;
-  }
-
-  return result;
-}
-
-// =====================================================
-// MARKDOWN RENDERER
-// =====================================================
-
-function renderMarkdown(md) {
-  if (!md) return '';
-
-  let html = md;
-
-  // Fenced code blocks
-  html = html.replace(/```([^\n]*)\n([\s\S]*?)```/gm, (_, lang, code) => {
-    const escaped = escapeHtml(code.trimEnd());
-    return `<pre><code class="lang-${escapeHtml(lang)}">${escaped}</code></pre>`;
-  });
-
-  // Inline code
-  html = html.replace(/`([^`\n]+)`/g, (_, code) => {
-    return `<code>${escapeHtml(code)}</code>`;
-  });
-
-  // Tables
-  html = processMarkdownTables(html);
-
-  // Blockquotes
-  html = html.replace(/^(> .+(\n> .+)*)/gm, (block) => {
-    const inner = block.replace(/^> ?/gm, '').trim();
-    return `<blockquote><p>${inlineMarkdown(inner)}</p></blockquote>`;
-  });
-
-  // Headings
-  html = html.replace(/^###### (.+)$/gm, (_, t) => `<h6>${inlineMarkdown(t)}</h6>`);
-  html = html.replace(/^##### (.+)$/gm,  (_, t) => `<h5>${inlineMarkdown(t)}</h5>`);
-  html = html.replace(/^#### (.+)$/gm,   (_, t) => `<h4>${inlineMarkdown(t)}</h4>`);
-  html = html.replace(/^### (.+)$/gm,    (_, t) => `<h3>${inlineMarkdown(t)}</h3>`);
-  html = html.replace(/^## (.+)$/gm,     (_, t) => `<h2>${inlineMarkdown(t)}</h2>`);
-  html = html.replace(/^# (.+)$/gm,      (_, t) => `<h1>${inlineMarkdown(t)}</h1>`);
-
-  // Horizontal rules
-  html = html.replace(/^(---|\*\*\*|___)\s*$/gm, '<hr>');
-
-  // Lists
-  html = processLists(html);
-
-  // Paragraphs
-  html = html.replace(/^(?!<[a-z]|[ \t]*$)(.+)$/gm, (line) => {
-    if (/^<(h[1-6]|ul|ol|li|blockquote|pre|hr|table)/.test(line)) return line;
-    return `<p>${inlineMarkdown(line)}</p>`;
-  });
-
-  html = html.replace(/\n{3,}/g, '\n\n');
-
-  return html;
-}
-
-function inlineMarkdown(text) {
-  text = text.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-  text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  text = text.replace(/__(.+?)__/g, '<strong>$1</strong>');
-  text = text.replace(/\*([^*\n]+?)\*/g, '<em>$1</em>');
-  text = text.replace(/_([^_\n]+?)_/g, '<em>$1</em>');
-  text = text.replace(/~~(.+?)~~/g, '<del>$1</del>');
-  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
-  text = text.replace(/`([^`]+)`/g, (_, c) => `<code>${escapeHtml(c)}</code>`);
-  text = text.replace(/&(?!amp;|lt;|gt;|quot;|#)/g, '&amp;');
-  return text;
-}
-
-function processLists(html) {
-  html = html.replace(/((?:^[ \t]*[-*+] .+\n?)+)/gm, (block) => {
-    const items = block.trim().split('\n').map(line => {
-      const m = line.match(/^[ \t]*[-*+] (.+)$/);
-      return m ? `<li>${inlineMarkdown(m[1])}</li>` : '';
-    }).filter(Boolean).join('\n');
-    return `<ul>\n${items}\n</ul>\n`;
-  });
-
-  html = html.replace(/((?:^[ \t]*\d+\. .+\n?)+)/gm, (block) => {
-    const items = block.trim().split('\n').map(line => {
-      const m = line.match(/^[ \t]*\d+\. (.+)$/);
-      return m ? `<li>${inlineMarkdown(m[1])}</li>` : '';
-    }).filter(Boolean).join('\n');
-    return `<ol>\n${items}\n</ol>\n`;
-  });
-
-  return html;
-}
-
-function processMarkdownTables(html) {
-  return html.replace(
-    /(^\|.+\|\n\|[-| :]+\|\n(?:\|.+\|\n?)*)/gm,
-    (block) => {
-      const lines = block.trim().split('\n');
-      if (lines.length < 2) return block;
-
-      const headers = parseTableRow(lines[0]);
-      const rows = lines.slice(2).map(parseTableRow);
-
-      const thead = `<thead><tr>${headers.map(h => `<th>${inlineMarkdown(h)}</th>`).join('')}</tr></thead>`;
-      const tbody = rows.map(row =>
-        `<tr>${row.map(cell => `<td>${inlineMarkdown(cell)}</td>`).join('')}</tr>`
-      ).join('\n');
-
-      return `<table>\n${thead}\n<tbody>\n${tbody}\n</tbody>\n</table>\n`;
-    }
-  );
-}
-
-function parseTableRow(line) {
-  return line.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
-}
-
-function escapeHtml(str) {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-// =====================================================
-// CAMPAIGN DISCOVERY
-// =====================================================
-
-async function discoverCampaigns(rootHandle) {
-  const campaigns = [];
-  try {
-    const campaignsDir = await rootHandle.getDirectoryHandle('campaigns');
-    for await (const [name, entry] of campaignsDir.entries()) {
-      if (entry.kind !== 'directory') continue;
-      try {
-        const campaignFileHandle = await entry.getFileHandle('campaign.md');
-        const file = await campaignFileHandle.getFile();
-        const raw  = await file.text();
-        const fm   = parseFrontmatter(raw);
-        campaigns.push({
-          id:     fm.id   || name,
-          name:   fm.name || name,
-          handle: entry,
-        });
-      } catch {
-        // No campaign.md — skip this folder
-      }
-    }
-  } catch {
-    // No campaigns/ folder
-  }
-  campaigns.sort((a, b) => a.id.localeCompare(b.id));
-  return campaigns;
-}
-
-// =====================================================
-// FILESYSTEM — READ DIRECTORY
-// =====================================================
-
-async function readDirectory(dirHandle) {
+/**
+ * Recursively fetches all .md files under a given repo path.
+ * Skips .dm.md files (DM notes) and campaign.md (metadata).
+ * Returns an array of { path, sha, frontmatter, rawContent }.
+ *
+ * @param {string} dirPath - Repo-relative directory path to walk
+ * @returns {Promise<Array>}
+ */
+async function fetchAllFiles(dirPath) {
   const files = [];
-  await walkDirectory(dirHandle, '', files);
+  await walkRepoDirectory(dirPath, files);
 
-  // Also load rules.md from root if available
-  if (state.rootHandle) {
-    try {
-      const rulesHandle = await state.rootHandle.getFileHandle('rules.md');
-      const file = await rulesHandle.getFile();
-      const raw  = await file.text();
-      const fm   = parseFrontmatter(raw);
-      files.push({ path: 'rules.md', handle: rulesHandle, frontmatter: fm, rawContent: raw });
-    } catch {
-      // rules.md not found at root — ignore
-    }
+  // Also load rules.md from repo root
+  try {
+    const { content, sha } = await readFile('rules.md', GITHUB_TOKEN_RW);
+    const fm = parseFrontmatter(content);
+    files.push({ path: 'rules.md', sha, frontmatter: fm, rawContent: content });
+  } catch (_) {
+    // No rules.md at root — skip
   }
 
   return files;
 }
 
-async function walkDirectory(handle, prefix, files) {
-  for await (const [name, entry] of handle.entries()) {
-    const normName = name.replace(/\\/g, '/');
-    if (entry.kind === 'file' && normName.endsWith('.md') && !normName.endsWith('.dm.md')) {
-      // Skip campaign.md — it's metadata, not a browsable file
-      if (normName === 'campaign.md') continue;
-      const path = prefix ? `${prefix}/${normName}` : normName;
-      try {
-        const file    = await entry.getFile();
-        const raw     = await file.text();
-        const fm      = parseFrontmatter(raw);
-        files.push({ path, handle: entry, frontmatter: fm, rawContent: raw });
-      } catch (e) {
-        console.warn(`Could not read ${path}:`, e);
-      }
-    } else if (entry.kind === 'directory') {
-      const subPrefix = prefix ? `${prefix}/${name}` : name;
-      await walkDirectory(entry, subPrefix, files);
+/**
+ * Recursive directory walker for the GitHub API.
+ * Fills the provided array in-place.
+ *
+ * @param {string} dirPath - Current directory path
+ * @param {Array}  results - Array to push file objects into
+ */
+async function walkRepoDirectory(dirPath, results) {
+  let entries;
+  try {
+    entries = await listDirectory(dirPath, GITHUB_TOKEN_RW);
+  } catch (e) {
+    console.warn(`Could not list directory "${dirPath}":`, e.message);
+    return;
+  }
+
+  for (const entry of entries) {
+    if (entry.type === 'dir') {
+      await walkRepoDirectory(entry.path, results);
+      continue;
+    }
+
+    if (!entry.name.endsWith('.md'))      continue;  // not markdown
+    if (entry.name.endsWith('.dm.md'))    continue;  // DM notes — loaded separately
+    if (entry.name === 'campaign.md')     continue;  // metadata only
+
+    try {
+      const { content, sha } = await readFile(entry.path, GITHUB_TOKEN_RW);
+      const fm = parseFrontmatter(content);
+      results.push({ path: entry.path, sha, frontmatter: fm, rawContent: content });
+    } catch (e) {
+      console.warn(`Could not read file "${entry.path}":`, e.message);
     }
   }
 }
 
-async function writeFile(fileHandle, content) {
-  const writable = await fileHandle.createWritable();
-  await writable.write(content);
-  await writable.close();
+// =====================================================
+// GITHUB WRITES — save edits back to the repo
+// =====================================================
+
+/**
+ * Saves the current main-content edit back to GitHub.
+ * Updates the file's SHA in state so subsequent saves work correctly.
+ */
+async function saveMainContent() {
+  if (!state.currentFile || !state.editing) return;
+
+  const newContent = document.getElementById('edit-textarea').value;
+  const commitMsg  = `Update ${state.currentFile.path}`;
+
+  showSaveStatus('Saving…');
+  try {
+    const { sha } = await writeFile(
+      state.currentFile.path,
+      newContent,
+      commitMsg,
+      GITHUB_TOKEN_RW,
+      state.currentFile.sha
+    );
+
+    state.currentFile.sha        = sha;
+    state.currentFile.rawContent = newContent;
+    state.currentFile.frontmatter = parseFrontmatter(newContent);
+
+    exitEditMode(true);
+    buildSidebar(state.files);
+    restoreActiveNavItem();
+
+    if (isPlayerFile(state.currentFile)) {
+      renderPlayerPanel(state.files);
+    }
+
+    showSaveStatus('Saved', 2000);
+  } catch (e) {
+    showSaveStatus('');
+    showError('Save failed: ' + e.message);
+  }
+}
+
+/**
+ * Saves DM notes back to GitHub as a .dm.md file alongside the main file.
+ */
+async function saveDmNotes() {
+  const content = document.getElementById('dm-notes-textarea').value;
+  const path    = dmNotesPath(state.currentFile.path);
+  const commitMsg = `Update DM notes for ${state.currentFile.path}`;
+
+  showSaveStatus('Saving notes…');
+  try {
+    const existingSha = state.dmNotesFile ? state.dmNotesFile.sha : null;
+    const { sha } = await writeFile(path, content, commitMsg, GITHUB_TOKEN_RW, existingSha);
+
+    state.dmNotesFile = { path, sha, content };
+    exitDmNotesEdit(true);
+    showSaveStatus('Notes saved', 2000);
+  } catch (e) {
+    showSaveStatus('');
+    showError('Could not save DM notes: ' + e.message);
+  }
 }
 
 // =====================================================
-// SIDEBAR BUILDER
+// DM NOTES — load & render
 // =====================================================
 
+/**
+ * Returns the .dm.md path for a given content file path.
+ * e.g. "campaigns/campaign-01/arc1/chapter1.md" → "campaigns/campaign-01/arc1/chapter1.dm.md"
+ *
+ * @param {string} filePath
+ * @returns {string}
+ */
+function dmNotesPath(filePath) {
+  return filePath.replace(/\.md$/, '.dm.md');
+}
+
+/**
+ * Loads DM notes for the currently open file.
+ * If no .dm.md file exists yet, state.dmNotesFile is set to null
+ * and the pane shows an empty state.
+ */
+async function loadDmNotes() {
+  state.dmNotesFile = null;
+  exitDmNotesEdit(false);
+
+  const path = dmNotesPath(state.currentFile.path);
+  try {
+    const { content, sha } = await readFile(path, GITHUB_TOKEN_RW);
+    state.dmNotesFile = { path, sha, content };
+  } catch (_) {
+    // File doesn't exist yet — that's fine, it'll be created on first save
+  }
+
+  renderDmNotes();
+}
+
+/**
+ * Renders the DM notes pane with the current content.
+ */
+function renderDmNotes() {
+  const view = document.getElementById('dm-notes-view');
+  const content = state.dmNotesFile ? state.dmNotesFile.content : '';
+  if (content && content.trim()) {
+    view.innerHTML = `<div class="md-body">${renderMarkdown(content)}</div>`;
+  } else {
+    view.innerHTML = `<div class="dm-notes-empty">No DM notes yet. Click Edit to add some.</div>`;
+  }
+}
+
+// =====================================================
+// SIDEBAR
+// =====================================================
+
+/**
+ * Builds the sidebar navigation from the loaded file list.
+ * Sections: Campaign, Cards, Players, Characters, Arcs.
+ *
+ * @param {Array} files - Array of file objects from state.files
+ */
 function buildSidebar(files) {
   const nav = document.getElementById('sidebar-nav');
   nav.innerHTML = '';
 
-  // Campaign section
-  const camp = createCollapsibleSection('Campaign', true);
-  nav.appendChild(camp.wrapper);
+  // Campaign section — fixed named files
+  const campSection = createCollapsibleSection('Campaign', true);
+  nav.appendChild(campSection.wrapper);
   const campaignFiles = [
-    { path: 'campaign-overview.md', label: 'Campaign Overview' },
-    { path: 'campaign-threads.md',  label: 'Thread Map' },
-    { path: 'rules.md',             label: 'Rules' },
+    { path: `${state.activeCampaign.path}/campaign-overview.md`, label: 'Campaign Overview' },
+    { path: `${state.activeCampaign.path}/campaign-threads.md`,  label: 'Thread Map' },
+    { path: 'rules.md', label: 'Rules' },
   ];
   for (const cf of campaignFiles) {
     const f = files.find(f => f.path === cf.path);
-    if (f) camp.items.appendChild(createNavItem(cf.label, f, null));
+    if (f) campSection.items.appendChild(createNavItem(cf.label, f));
   }
 
-  // Cards section
-  const cards = createCollapsibleSection('Cards', true);
-  nav.appendChild(cards.wrapper);
-  const cardFiles = [
-    { path: 'cards/weapons.md',    label: 'Weapons' },
-    { path: 'cards/spells.md',     label: 'Spells' },
-    { path: 'cards/armour.md',     label: 'Armour' },
-    { path: 'cards/abilities.md',  label: 'Abilities' },
-    { path: 'cards/items.md',      label: 'Items' },
+  // Cards section — table summary files (the original reference files)
+  const cardsSection = createCollapsibleSection('Cards', true);
+  nav.appendChild(cardsSection.wrapper);
+  const cardTableFiles = [
+    { match: /\/cards\/weapons\.md$/,    label: 'Weapons' },
+    { match: /\/cards\/spells\.md$/,     label: 'Spells' },
+    { match: /\/cards\/armour\.md$/,     label: 'Armour' },
+    { match: /\/cards\/abilities\.md$/,  label: 'Abilities' },
+    { match: /\/cards\/items\.md$/,      label: 'Items' },
   ];
-  for (const cf of cardFiles) {
-    const f = files.find(f => f.path === cf.path);
-    if (f) cards.items.appendChild(createNavItem(cf.label, f, null));
+  for (const cf of cardTableFiles) {
+    const f = files.find(f => cf.match.test(f.path));
+    if (f) cardsSection.items.appendChild(createNavItem(cf.label, f));
   }
 
   // Players section
   const playersSection = createCollapsibleSection('Players', true);
   nav.appendChild(playersSection.wrapper);
   const players = files
-    .filter(f => f.frontmatter.type === 'player' || f.path.startsWith('players/'))
-    .sort((a, b) => {
-      const na = (a.frontmatter.name || a.path).toLowerCase();
-      const nb = (b.frontmatter.name || b.path).toLowerCase();
-      return na.localeCompare(nb);
-    });
+    .filter(f => isPlayerFile(f))
+    .sort((a, b) => (a.frontmatter.name || a.path).toLowerCase()
+      .localeCompare((b.frontmatter.name || b.path).toLowerCase()));
   for (const p of players) {
-    const label = p.frontmatter.name || filenameLabel(p.path);
-    playersSection.items.appendChild(createNavItem(label, p, null));
+    playersSection.items.appendChild(
+      createNavItem(p.frontmatter.name || filenameLabel(p.path), p)
+    );
   }
 
   // Characters section
   const charsSection = createCollapsibleSection('Characters', true);
   nav.appendChild(charsSection.wrapper);
   const chars = files
-    .filter(f => f.frontmatter.type === 'character' || f.path.startsWith('characters/'))
-    .sort((a, b) => {
-      const na = (a.frontmatter.name || a.path).toLowerCase();
-      const nb = (b.frontmatter.name || b.path).toLowerCase();
-      return na.localeCompare(nb);
-    });
+    .filter(f => f.frontmatter.type === 'character' || f.path.includes('/characters/'))
+    .sort((a, b) => (a.frontmatter.name || a.path).toLowerCase()
+      .localeCompare((b.frontmatter.name || b.path).toLowerCase()));
   for (const ch of chars) {
-    const label = ch.frontmatter.name || filenameLabel(ch.path);
-    charsSection.items.appendChild(createNavItem(label, ch, null));
+    charsSection.items.appendChild(
+      createNavItem(ch.frontmatter.name || filenameLabel(ch.path), ch)
+    );
   }
 
   // Arcs section
@@ -400,23 +305,33 @@ function buildSidebar(files) {
 
   const arcFolders = new Set();
   for (const f of files) {
-    const m = f.path.match(/^(arc\d+)\//);
+    // Match paths like campaigns/campaign-01/arc1/chapter1.md
+    const m = f.path.match(/\/(arc\d+)\//);
     if (m) arcFolders.add(m[1]);
   }
+
   const sortedArcs = Array.from(arcFolders).sort((a, b) =>
     parseInt(a.replace('arc', '')) - parseInt(b.replace('arc', ''))
   );
 
   for (const arcFolder of sortedArcs) {
-    const arcFiles = files.filter(f => f.path.startsWith(`${arcFolder}/`));
+    const arcFiles    = files.filter(f => f.path.includes(`/${arcFolder}/`));
     const overviewFile = arcFiles.find(f => f.path.endsWith('-overview.md'));
-    const arcNum = arcFolder.replace('arc', '');
-    const arcTitle = overviewFile ? (overviewFile.frontmatter.title || 'TBD') : 'TBD';
-    const label = `Arc ${arcNum} — ${arcTitle}`;
-    arcsSection.items.appendChild(createArcSection(label, arcFolder, arcFiles, overviewFile));
+    const arcNum      = arcFolder.replace('arc', '');
+    const arcTitle    = overviewFile ? (overviewFile.frontmatter.title || 'TBD') : 'TBD';
+    arcsSection.items.appendChild(
+      createArcSection(`Arc ${arcNum} — ${arcTitle}`, arcFolder, arcFiles, overviewFile)
+    );
   }
 }
 
+/**
+ * Creates a collapsible section group for the sidebar.
+ *
+ * @param {string}  text      - Section heading text
+ * @param {boolean} startOpen - Whether to start expanded
+ * @returns {{ wrapper: HTMLElement, items: HTMLElement }}
+ */
 function createCollapsibleSection(text, startOpen = true) {
   const wrapper = document.createElement('div');
   wrapper.className = 'nav-section-group';
@@ -438,16 +353,17 @@ function createCollapsibleSection(text, startOpen = true) {
   return { wrapper, items };
 }
 
-function createNavItem(label, fileObj, statusDot) {
+/**
+ * Creates a single clickable sidebar item.
+ *
+ * @param {string}      label   - Display text
+ * @param {object}      fileObj - File object from state.files
+ * @returns {HTMLElement}
+ */
+function createNavItem(label, fileObj) {
   const el = document.createElement('div');
   el.className = 'nav-item';
   el.dataset.path = fileObj.path;
-
-  if (statusDot) {
-    const dot = document.createElement('span');
-    dot.className = `status-dot ${statusDot}`;
-    el.appendChild(dot);
-  }
 
   const title = document.createElement('span');
   title.className = 'nav-item-title';
@@ -458,6 +374,15 @@ function createNavItem(label, fileObj, statusDot) {
   return el;
 }
 
+/**
+ * Creates a nested arc section with a header and child chapter items.
+ *
+ * @param {string}       label       - Arc label, e.g. "Arc 1 — The Beginning"
+ * @param {string}       arcFolder   - Folder name, e.g. "arc1"
+ * @param {Array}        arcFiles    - All file objects within this arc
+ * @param {object|null}  overviewFile - The arc overview file, if found
+ * @returns {HTMLElement}
+ */
 function createArcSection(label, arcFolder, arcFiles, overviewFile) {
   const section = document.createElement('div');
   section.className = 'arc-section';
@@ -475,7 +400,7 @@ function createArcSection(label, arcFolder, arcFiles, overviewFile) {
   });
 
   if (overviewFile) {
-    children.appendChild(createNavItem('Overview', overviewFile, null));
+    children.appendChild(createNavItem('Overview', overviewFile));
   }
 
   const chapters = arcFiles
@@ -490,8 +415,15 @@ function createArcSection(label, arcFolder, arcFiles, overviewFile) {
     const chNum   = ch.frontmatter.chapter || '?';
     const chTitle = ch.frontmatter.title || filenameLabel(ch.path);
     const status  = normaliseStatus(ch.frontmatter.status);
-    const itemLabel = `Ch${chNum}: ${chTitle}`;
-    children.appendChild(createNavItem(itemLabel, ch, status));
+    const el      = createNavItem(`Ch${chNum}: ${chTitle}`, ch);
+
+    if (status) {
+      const dot = document.createElement('span');
+      dot.className = `status-dot ${status}`;
+      el.insertBefore(dot, el.firstChild);
+    }
+
+    children.appendChild(el);
   }
 
   section.appendChild(header);
@@ -499,26 +431,26 @@ function createArcSection(label, arcFolder, arcFiles, overviewFile) {
   return section;
 }
 
-function normaliseStatus(raw) {
-  if (!raw) return 'stub';
-  const s = raw.toLowerCase();
-  if (s === 'complete' || s === 'done') return 'complete';
-  if (s === 'in-progress' || s === 'in progress' || s === 'wip') return 'in-progress';
-  return 'stub';
-}
-
-function filenameLabel(path) {
-  return path.split('/').pop().replace('.md', '').replace(/-/g, ' ');
+/**
+ * Restores the active highlight on the current file's nav item after a sidebar rebuild.
+ */
+function restoreActiveNavItem() {
+  if (!state.currentFile) return;
+  document.querySelectorAll('.nav-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.path === state.currentFile.path);
+  });
 }
 
 // =====================================================
 // OPEN FILE
 // =====================================================
 
-function isArcOrChapterFile(fileObj) {
-  return /^arc\d+\//.test(fileObj.path);
-}
-
+/**
+ * Opens a file in the main content pane.
+ * Handles unsaved-changes guards, DM notes loading, and character badge.
+ *
+ * @param {object} fileObj - File object from state.files
+ */
 async function openFile(fileObj) {
   if (state.editing) {
     if (!confirm('You have unsaved changes. Discard them?')) return;
@@ -535,63 +467,88 @@ async function openFile(fileObj) {
     el.classList.toggle('active', el.dataset.path === fileObj.path);
   });
 
-  const arcMatch = fileObj.path.match(/^(arc\d+)\//);
+  // Expand the arc section containing this file
+  const arcMatch = fileObj.path.match(/\/(arc\d+)\//);
   if (arcMatch) {
     const arcFolder = arcMatch[1];
     document.querySelectorAll('.arc-section').forEach(section => {
-      const header   = section.querySelector('.arc-header');
-      const children = section.querySelector('.arc-children');
-      const label    = header.querySelector('.arc-label').textContent;
-      if (label.toLowerCase().includes(`arc ${arcFolder.replace('arc', '')}`)) {
-        header.classList.add('open');
-        children.classList.add('open');
-        const parentItems = section.closest('.nav-section-items');
-        if (parentItems && parentItems.classList.contains('collapsed')) {
-          parentItems.classList.remove('collapsed');
-          const parentHeader = parentItems.previousElementSibling;
-          if (parentHeader) parentHeader.classList.add('open');
-        }
+      const arcLabel = section.querySelector('.arc-label');
+      if (arcLabel && arcLabel.textContent.toLowerCase().includes(
+        `arc ${arcFolder.replace('arc', '')}`
+      )) {
+        section.querySelector('.arc-header').classList.add('open');
+        section.querySelector('.arc-children').classList.add('open');
       }
     });
   }
 
   document.querySelector('.file-path').textContent = fileObj.path;
-  const label = fileObj.frontmatter.title || fileObj.frontmatter.name || filenameLabel(fileObj.path);
-  document.getElementById('left-pane-label').textContent = label;
+  document.getElementById('left-pane-label').textContent =
+    fileObj.frontmatter.title || fileObj.frontmatter.name || filenameLabel(fileObj.path);
 
   renderCharacterBadge(fileObj);
 
-  const rightPane  = document.getElementById('right-pane');
+  // Show DM notes pane only for arc/chapter files
+  const rightPane   = document.getElementById('right-pane');
   const paneResizer = document.getElementById('pane-resizer');
-  const splitPane  = document.getElementById('split-pane');
+  const splitPane   = document.getElementById('split-pane');
   if (isArcOrChapterFile(fileObj)) {
-    rightPane.style.display = '';
+    rightPane.style.display   = '';
     paneResizer.style.display = '';
     splitPane.classList.add('split-active');
-    await loadDmNotes(fileObj);
+    await loadDmNotes();
   } else {
-    rightPane.style.display = 'none';
+    rightPane.style.display   = 'none';
     paneResizer.style.display = 'none';
     splitPane.classList.remove('split-active');
-    state.dmNotesHandle  = null;
-    state.dmNotesContent = '';
+    state.dmNotesFile = null;
   }
 
+  // Fade in new content
   const contentView = document.getElementById('content-view');
   contentView.classList.add('fading');
-
   await new Promise(r => setTimeout(r, 80));
-
   contentView.innerHTML = `<div class="md-body">${renderMarkdown(fileObj.frontmatter._body || '')}</div>`;
   contentView.classList.remove('fading');
 
   document.getElementById('content-view').style.display = '';
   document.getElementById('edit-view').classList.remove('active');
-  document.getElementById('btn-edit').style.display = '';
-  document.getElementById('btn-save').style.display = 'none';
+  document.getElementById('btn-edit').style.display   = '';
+  document.getElementById('btn-save').style.display   = 'none';
   document.getElementById('btn-cancel').style.display = 'none';
 }
 
+/**
+ * Returns true if the file is an arc overview or chapter (i.e. should show DM notes pane).
+ *
+ * @param {object} fileObj
+ * @returns {boolean}
+ */
+function isArcOrChapterFile(fileObj) {
+  return /\/arc\d+\//.test(fileObj.path);
+}
+
+/**
+ * Returns true if the file is a player character sheet.
+ *
+ * @param {object} fileObj
+ * @returns {boolean}
+ */
+function isPlayerFile(fileObj) {
+  return fileObj.frontmatter.type === 'player' ||
+    fileObj.path.includes('/players/') && fileObj.path.endsWith('.md');
+}
+
+// =====================================================
+// CHARACTER BADGE
+// =====================================================
+
+/**
+ * Shows or hides the character badge above the content pane.
+ * Only visible when a file with type: character is open.
+ *
+ * @param {object} fileObj
+ */
 function renderCharacterBadge(fileObj) {
   const badge = document.getElementById('character-badge');
   if (fileObj.frontmatter.type !== 'character') {
@@ -615,9 +572,13 @@ function renderCharacterBadge(fileObj) {
 }
 
 // =====================================================
-// EDIT MODE
+// EDIT MODE — main content
 // =====================================================
 
+/**
+ * Enters edit mode for the current file.
+ * Swaps the rendered view for the textarea editor.
+ */
 function enterEditMode() {
   if (!state.currentFile) return;
   state.editing = true;
@@ -627,63 +588,86 @@ function enterEditMode() {
 
   document.getElementById('content-view').style.display = 'none';
   document.getElementById('edit-view').classList.add('active');
-  document.getElementById('btn-edit').style.display = 'none';
-  document.getElementById('btn-save').style.display = '';
+  document.getElementById('btn-edit').style.display   = 'none';
+  document.getElementById('btn-save').style.display   = '';
   document.getElementById('btn-cancel').style.display = '';
   document.getElementById('format-toolbar').classList.add('active');
 
   textarea.focus();
 }
 
-async function saveFile() {
-  if (!state.currentFile || !state.editing) return;
-
-  const newContent = document.getElementById('edit-textarea').value;
-
-  try {
-    await writeFile(state.currentFile.handle, newContent);
-
-    state.currentFile.rawContent  = newContent;
-    state.currentFile.frontmatter = parseFrontmatter(newContent);
-
-    exitEditMode(true);
-
-    buildSidebar(state.files);
-    document.querySelectorAll('.nav-item').forEach(el => {
-      el.classList.toggle('active', el.dataset.path === state.currentFile.path);
-    });
-    if (state.currentFile.frontmatter.type === 'player' || state.currentFile.path.startsWith('players/')) {
-      renderPlayerPanel(state.files);
-    }
-  } catch (e) {
-    alert('Save failed: ' + e.message);
-  }
-}
-
+/**
+ * Exits edit mode. Optionally re-renders the content view.
+ *
+ * @param {boolean} andRender - If true, re-render the markdown content view
+ */
 function exitEditMode(andRender) {
   state.editing = false;
   document.getElementById('content-view').style.display = '';
   document.getElementById('edit-view').classList.remove('active');
-  document.getElementById('btn-edit').style.display = '';
-  document.getElementById('btn-save').style.display = 'none';
+  document.getElementById('btn-edit').style.display   = '';
+  document.getElementById('btn-save').style.display   = 'none';
   document.getElementById('btn-cancel').style.display = 'none';
   document.getElementById('format-toolbar').classList.remove('active');
 
   if (andRender && state.currentFile) {
-    const contentView = document.getElementById('content-view');
-    contentView.innerHTML = `<div class="md-body">${renderMarkdown(state.currentFile.frontmatter._body || '')}</div>`;
+    document.getElementById('content-view').innerHTML =
+      `<div class="md-body">${renderMarkdown(state.currentFile.frontmatter._body || '')}</div>`;
     renderCharacterBadge(state.currentFile);
   }
+}
+
+// =====================================================
+// EDIT MODE — DM notes
+// =====================================================
+
+/**
+ * Enters edit mode for the DM notes pane.
+ */
+function enterDmNotesEdit() {
+  state.editingDmNotes = true;
+  const textarea = document.getElementById('dm-notes-textarea');
+  textarea.value = state.dmNotesFile ? state.dmNotesFile.content : '';
+
+  document.getElementById('dm-notes-view').style.display = 'none';
+  document.getElementById('dm-notes-edit').classList.add('active');
+  document.getElementById('btn-dm-edit').style.display   = 'none';
+  document.getElementById('btn-dm-save').style.display   = '';
+  document.getElementById('btn-dm-cancel').style.display = '';
+  document.getElementById('dm-format-toolbar').classList.add('active');
+  textarea.focus();
+}
+
+/**
+ * Exits DM notes edit mode. Optionally re-renders the notes view.
+ *
+ * @param {boolean} andRender
+ */
+function exitDmNotesEdit(andRender) {
+  state.editingDmNotes = false;
+  document.getElementById('dm-notes-view').style.display = '';
+  document.getElementById('dm-notes-edit').classList.remove('active');
+  document.getElementById('btn-dm-edit').style.display   = '';
+  document.getElementById('btn-dm-save').style.display   = 'none';
+  document.getElementById('btn-dm-cancel').style.display = 'none';
+  document.getElementById('dm-format-toolbar').classList.remove('active');
+  if (andRender) renderDmNotes();
 }
 
 // =====================================================
 // MARKDOWN FORMAT TOOLBAR
 // =====================================================
 
+/**
+ * Applies a formatting action to a textarea at the current cursor position or selection.
+ *
+ * @param {HTMLTextAreaElement} textarea - The target textarea
+ * @param {string}              action   - The format action name (e.g. 'bold', 'h1', 'ul')
+ */
 function applyFormatAction(textarea, action) {
-  const start = textarea.selectionStart;
-  const end   = textarea.selectionEnd;
-  const sel   = textarea.value.slice(start, end);
+  const start  = textarea.selectionStart;
+  const end    = textarea.selectionEnd;
+  const sel    = textarea.value.slice(start, end);
   const before = textarea.value.slice(0, start);
   const after  = textarea.value.slice(end);
 
@@ -703,41 +687,12 @@ function applyFormatAction(textarea, action) {
       insert = `~~${sel || 'text'}~~`;
       cursorOffset = sel ? insert.length : 2;
       break;
-    case 'h1': {
-      const line = getLineAt(textarea, start);
-      insert = applyHeadingToLine(line.text, '#');
-      replaceLineInTextarea(textarea, line, insert);
-      return;
-    }
-    case 'h2': {
-      const line = getLineAt(textarea, start);
-      insert = applyHeadingToLine(line.text, '##');
-      replaceLineInTextarea(textarea, line, insert);
-      return;
-    }
-    case 'h3': {
-      const line = getLineAt(textarea, start);
-      insert = applyHeadingToLine(line.text, '###');
-      replaceLineInTextarea(textarea, line, insert);
-      return;
-    }
-    case 'ul': {
-      const lines = sel ? sel.split('\n').map(l => `- ${l}`).join('\n') : '- ';
-      insertBlock(textarea, start, end, lines, !sel);
-      return;
-    }
-    case 'ol': {
-      const lines = sel
-        ? sel.split('\n').map((l, i) => `${i + 1}. ${l}`).join('\n')
-        : '1. ';
-      insertBlock(textarea, start, end, lines, !sel);
-      return;
-    }
-    case 'blockquote': {
-      const lines = sel ? sel.split('\n').map(l => `> ${l}`).join('\n') : '> ';
-      insertBlock(textarea, start, end, lines, !sel);
-      return;
-    }
+    case 'h1': { const l1 = getLineAt(textarea, start); replaceLineInTextarea(textarea, l1, applyHeadingToLine(l1.text, '#'));   return; }
+    case 'h2': { const l2 = getLineAt(textarea, start); replaceLineInTextarea(textarea, l2, applyHeadingToLine(l2.text, '##'));  return; }
+    case 'h3': { const l3 = getLineAt(textarea, start); replaceLineInTextarea(textarea, l3, applyHeadingToLine(l3.text, '###')); return; }
+    case 'ul': { const lines = sel ? sel.split('\n').map(l => `- ${l}`).join('\n') : '- ';   insertBlock(textarea, start, end, lines, !sel); return; }
+    case 'ol': { const lines = sel ? sel.split('\n').map((l,i) => `${i+1}. ${l}`).join('\n') : '1. '; insertBlock(textarea, start, end, lines, !sel); return; }
+    case 'blockquote': { const lines = sel ? sel.split('\n').map(l => `> ${l}`).join('\n') : '> '; insertBlock(textarea, start, end, lines, !sel); return; }
     case 'hr': {
       const hr = '\n\n---\n\n';
       textarea.value = before + hr + after;
@@ -749,8 +704,7 @@ function applyFormatAction(textarea, action) {
     case 'table': {
       const tbl = '\n| Header 1 | Header 2 | Header 3 |\n|----------|----------|----------|\n| Cell     | Cell     | Cell     |\n';
       textarea.value = before + tbl + after;
-      const pos = start + tbl.length;
-      textarea.setSelectionRange(pos, pos);
+      textarea.setSelectionRange(start + tbl.length, start + tbl.length);
       textarea.dispatchEvent(new Event('input'));
       return;
     }
@@ -768,10 +722,10 @@ function applyFormatAction(textarea, action) {
 }
 
 function getLineAt(textarea, pos) {
-  const val = textarea.value;
+  const val       = textarea.value;
   const lineStart = val.lastIndexOf('\n', pos - 1) + 1;
   const lineEnd   = val.indexOf('\n', pos);
-  const end = lineEnd === -1 ? val.length : lineEnd;
+  const end       = lineEnd === -1 ? val.length : lineEnd;
   return { start: lineStart, end, text: val.slice(lineStart, end) };
 }
 
@@ -800,204 +754,121 @@ function insertBlock(textarea, start, end, text, isEmpty) {
 }
 
 // =====================================================
-// DM NOTES
+// MARKDOWN RENDERER
 // =====================================================
 
-function dmNotesFilePath(filePath) {
-  return filePath.replace(/\.md$/, '.dm.md');
-}
+/**
+ * Converts a markdown string to an HTML string.
+ * Handles headings, bold, italic, lists, tables, blockquotes, code, and links.
+ *
+ * @param {string} md - Raw markdown text
+ * @returns {string} HTML string
+ */
+function renderMarkdown(md) {
+  if (!md) return '';
+  let html = md;
 
-async function loadDmNotes(fileObj) {
-  state.dmNotesHandle  = null;
-  state.dmNotesContent = '';
-  exitDmNotesEdit(false);
-
-  if (!state.dirHandle) return;
-
-  const dmPath = dmNotesFilePath(fileObj.path);
-  const parts  = dmPath.split('/');
-
-  try {
-    let dir = state.dirHandle;
-    for (let i = 0; i < parts.length - 1; i++) {
-      dir = await dir.getDirectoryHandle(parts[i]);
-    }
-    const filename = parts[parts.length - 1];
-    try {
-      state.dmNotesHandle = await dir.getFileHandle(filename);
-      const file = await state.dmNotesHandle.getFile();
-      state.dmNotesContent = await file.text();
-    } catch {
-      state.dmNotesHandle = await dir.getFileHandle(filename, { create: true });
-      state.dmNotesContent = '';
-    }
-  } catch (e) {
-    console.warn('Could not load DM notes:', e);
-  }
-
-  renderDmNotes();
-}
-
-function renderDmNotes() {
-  const view = document.getElementById('dm-notes-view');
-  if (state.dmNotesContent.trim()) {
-    view.innerHTML = `<div class="md-body">${renderMarkdown(state.dmNotesContent)}</div>`;
-  } else {
-    view.innerHTML = `<div class="dm-notes-empty">No DM notes yet. Click Edit to add some.</div>`;
-  }
-}
-
-function enterDmNotesEdit() {
-  state.editingDmNotes = true;
-  const textarea = document.getElementById('dm-notes-textarea');
-  textarea.value = state.dmNotesContent;
-  document.getElementById('dm-notes-view').style.display  = 'none';
-  document.getElementById('dm-notes-edit').classList.add('active');
-  document.getElementById('btn-dm-edit').style.display    = 'none';
-  document.getElementById('btn-dm-save').style.display    = '';
-  document.getElementById('btn-dm-cancel').style.display  = '';
-  document.getElementById('dm-format-toolbar').classList.add('active');
-  textarea.focus();
-}
-
-async function saveDmNotes() {
-  if (!state.dmNotesHandle) return;
-  const content = document.getElementById('dm-notes-textarea').value;
-  try {
-    await writeFile(state.dmNotesHandle, content);
-    state.dmNotesContent = content;
-    exitDmNotesEdit(true);
-  } catch (e) {
-    alert('Could not save DM notes: ' + e.message);
-  }
-}
-
-function exitDmNotesEdit(andRender) {
-  state.editingDmNotes = false;
-  document.getElementById('dm-notes-view').style.display  = '';
-  document.getElementById('dm-notes-edit').classList.remove('active');
-  document.getElementById('btn-dm-edit').style.display    = '';
-  document.getElementById('btn-dm-save').style.display    = 'none';
-  document.getElementById('btn-dm-cancel').style.display  = 'none';
-  document.getElementById('dm-format-toolbar').classList.remove('active');
-  if (andRender) renderDmNotes();
-}
-
-// =====================================================
-// PANE RESIZER
-// =====================================================
-
-function makeColResizer(resizerEl, leftEl, rightEl, containerEl, minLeft, minRight) {
-  let dragging = false;
-  let startX   = 0;
-  let startLeftW = 0;
-
-  resizerEl.addEventListener('mousedown', (e) => {
-    dragging   = true;
-    startX     = e.clientX;
-    startLeftW = leftEl.getBoundingClientRect().width;
-    document.body.style.cursor     = 'col-resize';
-    document.body.style.userSelect = 'none';
-    e.preventDefault();
-  });
-
-  document.addEventListener('mousemove', (e) => {
-    if (!dragging) return;
-    const totalW  = containerEl.getBoundingClientRect().width;
-    const newLeft = Math.max(minLeft, Math.min(totalW - minRight, startLeftW + (e.clientX - startX)));
-    leftEl.style.flex  = 'none';
-    leftEl.style.width = `${newLeft}px`;
-    rightEl.style.flex  = 'none';
-    rightEl.style.width = `${totalW - newLeft - resizerEl.offsetWidth}px`;
-  });
-
-  document.addEventListener('mouseup', () => {
-    if (dragging) {
-      dragging = false;
-      document.body.style.cursor     = '';
-      document.body.style.userSelect = '';
-    }
-  });
-}
-
-function makeRowResizer(resizerEl, topEl, bottomEl, minTop, minBottom) {
-  let dragging  = false;
-  let startY    = 0;
-  let startBotH = 0;
-
-  resizerEl.addEventListener('mousedown', (e) => {
-    dragging   = true;
-    startY     = e.clientY;
-    startBotH  = bottomEl.getBoundingClientRect().height;
-    document.body.style.cursor     = 'row-resize';
-    document.body.style.userSelect = 'none';
-    e.preventDefault();
-  });
-
-  document.addEventListener('mousemove', (e) => {
-    if (!dragging) return;
-    const delta  = startY - e.clientY;
-    const newH   = Math.max(minBottom, Math.min(window.innerHeight - minTop, startBotH + delta));
-    bottomEl.style.height = `${newH}px`;
-  });
-
-  document.addEventListener('mouseup', () => {
-    if (dragging) {
-      dragging = false;
-      document.body.style.cursor     = '';
-      document.body.style.userSelect = '';
-    }
-  });
-}
-
-function initPaneResizer() {
-  makeColResizer(
-    document.getElementById('pane-resizer'),
-    document.getElementById('left-pane'),
-    document.getElementById('right-pane'),
-    document.getElementById('split-pane'),
-    200, 200
+  html = html.replace(/```([^\n]*)\n([\s\S]*?)```/gm, (_, lang, code) =>
+    `<pre><code class="lang-${escapeHtml(lang)}">${escapeHtml(code.trimEnd())}</code></pre>`
   );
+  html = html.replace(/`([^`\n]+)`/g, (_, code) => `<code>${escapeHtml(code)}</code>`);
+  html = processMarkdownTables(html);
+  html = html.replace(/^(> .+(\n> .+)*)/gm, (block) => {
+    const inner = block.replace(/^> ?/gm, '').trim();
+    return `<blockquote><p>${inlineMarkdown(inner)}</p></blockquote>`;
+  });
+  html = html.replace(/^###### (.+)$/gm, (_, t) => `<h6>${inlineMarkdown(t)}</h6>`);
+  html = html.replace(/^##### (.+)$/gm,  (_, t) => `<h5>${inlineMarkdown(t)}</h5>`);
+  html = html.replace(/^#### (.+)$/gm,   (_, t) => `<h4>${inlineMarkdown(t)}</h4>`);
+  html = html.replace(/^### (.+)$/gm,    (_, t) => `<h3>${inlineMarkdown(t)}</h3>`);
+  html = html.replace(/^## (.+)$/gm,     (_, t) => `<h2>${inlineMarkdown(t)}</h2>`);
+  html = html.replace(/^# (.+)$/gm,      (_, t) => `<h1>${inlineMarkdown(t)}</h1>`);
+  html = html.replace(/^(---|\*\*\*|___)\s*$/gm, '<hr>');
+  html = processLists(html);
+  html = html.replace(/^(?!<[a-z]|[ \t]*$)(.+)$/gm, (line) => {
+    if (/^<(h[1-6]|ul|ol|li|blockquote|pre|hr|table)/.test(line)) return line;
+    return `<p>${inlineMarkdown(line)}</p>`;
+  });
+  html = html.replace(/\n{3,}/g, '\n\n');
+  return html;
 }
 
-function initSidebarResizer() {
-  makeColResizer(
-    document.getElementById('sidebar-resizer'),
-    document.getElementById('sidebar'),
-    document.getElementById('main-panel'),
-    document.querySelector('.app-body'),
-    140, 300
-  );
+function inlineMarkdown(text) {
+  text = text.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+  text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  text = text.replace(/__(.+?)__/g, '<strong>$1</strong>');
+  text = text.replace(/\*([^*\n]+?)\*/g, '<em>$1</em>');
+  text = text.replace(/_([^_\n]+?)_/g, '<em>$1</em>');
+  text = text.replace(/~~(.+?)~~/g, '<del>$1</del>');
+  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+  text = text.replace(/`([^`]+)`/g, (_, c) => `<code>${escapeHtml(c)}</code>`);
+  text = text.replace(/&(?!amp;|lt;|gt;|quot;|#)/g, '&amp;');
+  return text;
 }
 
-function initHpResizer() {
-  makeRowResizer(
-    document.getElementById('hp-resizer'),
-    document.getElementById('app'),
-    document.getElementById('hp-bar'),
-    120, 48
-  );
+function processLists(html) {
+  html = html.replace(/((?:^[ \t]*[-*+] .+\n?)+)/gm, (block) => {
+    const items = block.trim().split('\n')
+      .map(line => { const m = line.match(/^[ \t]*[-*+] (.+)$/); return m ? `<li>${inlineMarkdown(m[1])}</li>` : ''; })
+      .filter(Boolean).join('\n');
+    return `<ul>\n${items}\n</ul>\n`;
+  });
+  html = html.replace(/((?:^[ \t]*\d+\. .+\n?)+)/gm, (block) => {
+    const items = block.trim().split('\n')
+      .map(line => { const m = line.match(/^[ \t]*\d+\. (.+)$/); return m ? `<li>${inlineMarkdown(m[1])}</li>` : ''; })
+      .filter(Boolean).join('\n');
+    return `<ol>\n${items}\n</ol>\n`;
+  });
+  return html;
+}
+
+function processMarkdownTables(html) {
+  return html.replace(/(^\|.+\|\n\|[-| :]+\|\n(?:\|.+\|\n?)*)/gm, (block) => {
+    const lines   = block.trim().split('\n');
+    if (lines.length < 2) return block;
+    const headers = parseTableRow(lines[0]);
+    const rows    = lines.slice(2).map(parseTableRow);
+    const thead   = `<thead><tr>${headers.map(h => `<th>${inlineMarkdown(h)}</th>`).join('')}</tr></thead>`;
+    const tbody   = rows.map(row =>
+      `<tr>${row.map(cell => `<td>${inlineMarkdown(cell)}</td>`).join('')}</tr>`
+    ).join('\n');
+    return `<table>\n${thead}\n<tbody>\n${tbody}\n</tbody>\n</table>\n`;
+  });
+}
+
+function parseTableRow(line) {
+  return line.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
 }
 
 // =====================================================
 // SEARCH
 // =====================================================
 
+const GROUP_ORDER = ['Campaign', 'Cards', 'Players', 'Characters', 'Chapters', 'Arcs', 'Other'];
+
+/**
+ * Categorises a file into a search result group.
+ *
+ * @param {object} f - File object
+ * @returns {string} Group name
+ */
 function categoriseFile(f) {
   const type = (f.frontmatter.type || '').toLowerCase();
   const path = f.path;
-  if (type === 'player' || path.startsWith('players/')) return 'Players';
-  if (type === 'character' || path.startsWith('characters/')) return 'Characters';
-  if (type === 'chapter' || /^arc\d+\/chapter/.test(path))    return 'Chapters';
-  if (type === 'arc-overview' || /^arc\d+\/.*overview/.test(path)) return 'Arcs';
-  if (type === 'overview' || path === 'campaign-overview.md' || path === 'campaign-threads.md') return 'Campaign';
-  if (type === 'rules' || path === 'rules.md') return 'Campaign';
-  if (type === 'cards' || path.startsWith('cards/')) return 'Cards';
+  if (isPlayerFile(f))                                           return 'Players';
+  if (type === 'character' || path.includes('/characters/'))     return 'Characters';
+  if (type === 'chapter'   || /\/arc\d+\/chapter/.test(path))   return 'Chapters';
+  if (type === 'arc-overview' || /\/arc\d+\/.*overview/.test(path)) return 'Arcs';
+  if (path.endsWith('campaign-overview.md') || path.endsWith('campaign-threads.md') || path === 'rules.md') return 'Campaign';
+  if (path.includes('/cards/'))                                  return 'Cards';
   return 'Other';
 }
 
-const GROUP_ORDER = ['Campaign', 'Cards', 'Players', 'Characters', 'Chapters', 'Arcs', 'Other'];
-
+/**
+ * Runs a search across all loaded files and renders grouped results in the sidebar.
+ *
+ * @param {string} query - The search string
+ */
 function doSearch(query) {
   const nav     = document.getElementById('sidebar-nav');
   const results = document.getElementById('search-results');
@@ -1016,14 +887,10 @@ function doSearch(query) {
   const hits = [];
 
   for (const f of state.files) {
-    const fm    = f.frontmatter;
-    const body  = (fm._body || '').toLowerCase();
-    const fmStr = Object.entries(fm)
-      .filter(([k]) => k !== '_body')
-      .map(([k, v]) => `${k} ${v}`)
-      .join(' ')
-      .toLowerCase();
-
+    const fm     = f.frontmatter;
+    const body   = (fm._body || '').toLowerCase();
+    const fmStr  = Object.entries(fm).filter(([k]) => k !== '_body')
+      .map(([k, v]) => `${k} ${v}`).join(' ').toLowerCase();
     const inFm   = fmStr.includes(q);
     const inBody = body.includes(q);
     if (!inFm && !inBody) continue;
@@ -1032,10 +899,7 @@ function doSearch(query) {
     if (inFm) {
       for (const [k, v] of Object.entries(fm)) {
         if (k === '_body') continue;
-        if ((k + ' ' + v).toLowerCase().includes(q)) {
-          snippet = `[${k}]: ${v}`;
-          break;
-        }
+        if ((k + ' ' + v).toLowerCase().includes(q)) { snippet = `[${k}]: ${v}`; break; }
       }
     }
     if (!snippet && inBody) {
@@ -1044,7 +908,6 @@ function doSearch(query) {
       const end   = Math.min(body.length, idx + q.length + 60);
       snippet     = '...' + fm._body.slice(start, end).replace(/\n/g, ' ') + '...';
     }
-
     hits.push({ file: f, inFm, snippet, group: categoriseFile(f) });
   }
 
@@ -1058,13 +921,8 @@ function doSearch(query) {
     if (!groups[hit.group]) groups[hit.group] = [];
     groups[hit.group].push(hit);
   }
-
   for (const g of Object.keys(groups)) {
-    groups[g].sort((a, b) => {
-      if (a.inFm && !b.inFm) return -1;
-      if (!a.inFm && b.inFm) return 1;
-      return 0;
-    });
+    groups[g].sort((a, b) => (a.inFm && !b.inFm) ? -1 : (!a.inFm && b.inFm) ? 1 : 0);
   }
 
   const orderedGroups = [
@@ -1081,16 +939,11 @@ function doSearch(query) {
     for (const hit of groups[groupName]) {
       const item = document.createElement('div');
       item.className = 'search-result-item';
-
-      const name = hit.file.frontmatter.name ||
-                   hit.file.frontmatter.title ||
-                   filenameLabel(hit.file.path);
-
+      const name = hit.file.frontmatter.name || hit.file.frontmatter.title || filenameLabel(hit.file.path);
       const highlightedSnippet = hit.snippet.replace(
         new RegExp(escapeRegex(query), 'gi'),
         m => `<mark>${escapeHtml(m)}</mark>`
       );
-
       item.innerHTML = `
         <div class="search-result-filename">${escapeHtml(name)}<span class="search-result-path">${escapeHtml(hit.file.path)}</span></div>
         <div class="search-result-snippet">${highlightedSnippet}</div>
@@ -1105,28 +958,27 @@ function doSearch(query) {
   }
 }
 
-function escapeRegex(str) {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 // =====================================================
 // PLAYER PANEL
 // =====================================================
 
+/**
+ * Renders the player panel in the bottom bar from the loaded player files.
+ * Displays each player's stats, level, and perk summary.
+ *
+ * @param {Array} files - All loaded file objects
+ */
 function renderPlayerPanel(files) {
-  state.playerFiles = files.filter(
-    f => f.frontmatter.type === 'player' || f.path.startsWith('players/')
-  ).sort((a, b) => {
-    const na = (a.frontmatter.name || a.path).toLowerCase();
-    const nb = (b.frontmatter.name || b.path).toLowerCase();
-    return na.localeCompare(nb);
-  });
+  state.playerFiles = files
+    .filter(f => isPlayerFile(f))
+    .sort((a, b) => (a.frontmatter.name || a.path).toLowerCase()
+      .localeCompare((b.frontmatter.name || b.path).toLowerCase()));
 
-  const body = document.getElementById('player-panel-body');
+  const body       = document.getElementById('player-panel-body');
   const levelLabel = document.getElementById('player-panel-level-label');
 
   if (state.playerFiles.length === 0) {
-    body.innerHTML = '<span class="hp-empty">No player files found in players/ folder.</span>';
+    body.innerHTML = '<span class="hp-empty">No player files found.</span>';
     return;
   }
 
@@ -1138,35 +990,23 @@ function renderPlayerPanel(files) {
 
   for (const pf of state.playerFiles) {
     const fm = pf.frontmatter;
-    const name      = fm.name      || filenameLabel(pf.path);
-    const player    = fm.player    || '';
-    const might     = fm.might     || '–';
-    const finesse   = fm.finesse   || '–';
-    const mind      = fm.mind      || '–';
-    const playstyle = fm.playstyle || '';
-    const perk5     = fm.perk_5    || '';
-    const perk10    = fm.perk_10   || '';
-    const perk17    = fm.perk_17   || '';
-
     const card = document.createElement('div');
     card.className = 'player-card';
-
     card.innerHTML = `
-      <div class="player-card-name" title="${escapeHtml(name)}">${escapeHtml(name)}</div>
-      ${player ? `<div class="player-card-player">(${escapeHtml(player)})</div>` : ''}
+      <div class="player-card-name" title="${escapeHtml(fm.name || '')}">${escapeHtml(fm.name || filenameLabel(pf.path))}</div>
+      ${fm.player ? `<div class="player-card-player">(${escapeHtml(fm.player)})</div>` : ''}
       <div class="player-card-stats">
-        <div class="stat-block"><span class="stat-label">MIG</span><span class="stat-value">${escapeHtml(String(might))}</span></div>
-        <div class="stat-block"><span class="stat-label">FIN</span><span class="stat-value">${escapeHtml(String(finesse))}</span></div>
-        <div class="stat-block"><span class="stat-label">MND</span><span class="stat-value">${escapeHtml(String(mind))}</span></div>
+        <div class="stat-block"><span class="stat-label">MIG</span><span class="stat-value">${escapeHtml(String(fm.might  || '–'))}</span></div>
+        <div class="stat-block"><span class="stat-label">FIN</span><span class="stat-value">${escapeHtml(String(fm.finesse || '–'))}</span></div>
+        <div class="stat-block"><span class="stat-label">MND</span><span class="stat-value">${escapeHtml(String(fm.mind   || '–'))}</span></div>
       </div>
-      ${playstyle ? `<div class="player-card-playstyle">${escapeHtml(playstyle)}</div>` : ''}
+      ${fm.playstyle ? `<div class="player-card-playstyle">${escapeHtml(fm.playstyle)}</div>` : ''}
       <div class="player-card-perks">
-        ${makePerkRow('Lv5', perk5)}
-        ${makePerkRow('Lv10', perk10)}
-        ${makePerkRow('Lv17', perk17)}
+        ${makePerkRow('Lv5',  fm.perk_5  || '')}
+        ${makePerkRow('Lv10', fm.perk_10 || '')}
+        ${makePerkRow('Lv17', fm.perk_17 || '')}
       </div>
     `;
-
     wrap.appendChild(card);
   }
 
@@ -1180,15 +1020,22 @@ function renderPlayerPanel(files) {
   });
 }
 
+/**
+ * Returns HTML for a single perk row in the player panel card.
+ *
+ * @param {string} levelLabel - e.g. "Lv5"
+ * @param {string} perkText   - Perk name and optional description, separated by "|"
+ * @returns {string} HTML string
+ */
 function makePerkRow(levelLabel, perkText) {
   if (!perkText || !perkText.trim()) {
     return `<div class="perk-row">${escapeHtml(levelLabel)}: —</div>`;
   }
-  const pipeIdx = perkText.indexOf('|');
+  const pipeIdx  = perkText.indexOf('|');
   const perkName = pipeIdx > -1 ? perkText.slice(0, pipeIdx).trim() : perkText.trim();
   const perkDesc = pipeIdx > -1 ? perkText.slice(pipeIdx + 1).trim() : '';
-  const encoded = encodeURIComponent(JSON.stringify({ name: perkName, desc: perkDesc, level: levelLabel }));
-  return `<div class="perk-row has-perk" data-perk="${escapeHtml(encoded)}" title="">${escapeHtml(levelLabel)}: ${escapeHtml(perkName)}</div>`;
+  const encoded  = encodeURIComponent(JSON.stringify({ name: perkName, desc: perkDesc, level: levelLabel }));
+  return `<div class="perk-row has-perk" data-perk="${escapeHtml(encoded)}">${escapeHtml(levelLabel)}: ${escapeHtml(perkName)}</div>`;
 }
 
 let _tooltipEl = null;
@@ -1206,12 +1053,11 @@ function getPerkTooltip() {
 function showPerkTooltip(e) {
   const row = e.currentTarget;
   let data;
-  try {
-    data = JSON.parse(decodeURIComponent(row.dataset.perk));
-  } catch { return; }
-
+  try { data = JSON.parse(decodeURIComponent(row.dataset.perk)); } catch { return; }
   const tip = getPerkTooltip();
-  tip.innerHTML = `<strong>${escapeHtml(data.name)}</strong>${data.desc ? escapeHtml(data.desc) : '<em style="color:var(--text-faint)">No description set.</em>'}`;
+  tip.innerHTML = `<strong>${escapeHtml(data.name)}</strong>${data.desc
+    ? escapeHtml(data.desc)
+    : '<em style="color:var(--text-faint)">No description set.</em>'}`;
   tip.style.display = 'block';
   positionTooltip(tip, e);
 }
@@ -1223,8 +1069,7 @@ function movePerkTooltip(e) {
 }
 
 function hidePerkTooltip() {
-  const tip = getPerkTooltip();
-  tip.style.display = 'none';
+  getPerkTooltip().style.display = 'none';
 }
 
 function positionTooltip(tip, e) {
@@ -1239,36 +1084,33 @@ function positionTooltip(tip, e) {
   tip.style.top  = `${y}px`;
 }
 
-function initHpColResizer() {
-  makeColResizer(
-    document.getElementById('hp-col-resizer'),
-    document.getElementById('hp-tracker-pane'),
-    document.getElementById('player-panel'),
-    document.getElementById('hp-bar'),
-    180, 130
-  );
-}
-
 // =====================================================
 // HP TRACKER
 // =====================================================
 
+/**
+ * Adds an enemy to the HP tracker.
+ *
+ * @param {string} name  - Enemy name
+ * @param {number} maxHp - Maximum HP
+ */
 function addHpEntry(name, maxHp) {
-  const entry = {
-    id:      state.nextHpId++,
-    name,
-    max:     maxHp,
-    current: maxHp,
-  };
-  state.hpEntries.push(entry);
+  state.hpEntries.push({ id: state.nextHpId++, name, max: maxHp, current: maxHp });
   renderHpBar();
 }
 
+/** Removes an enemy from the HP tracker by ID. */
 function removeHpEntry(id) {
   state.hpEntries = state.hpEntries.filter(e => e.id !== id);
   renderHpBar();
 }
 
+/**
+ * Adjusts an enemy's current HP by a delta, clamped to [0, max].
+ *
+ * @param {number} id    - Enemy ID
+ * @param {number} delta - Amount to add (negative to subtract)
+ */
 function adjustHp(id, delta) {
   const entry = state.hpEntries.find(e => e.id === id);
   if (!entry) return;
@@ -1276,11 +1118,15 @@ function adjustHp(id, delta) {
   renderHpBar();
 }
 
+/** Clears all enemies from the HP tracker. */
 function clearAllHp() {
   state.hpEntries = [];
   renderHpBar();
 }
 
+/**
+ * Re-renders all HP tracker entries in the bottom bar.
+ */
 function renderHpBar() {
   const container = document.getElementById('hp-entries');
   container.innerHTML = '';
@@ -1293,19 +1139,18 @@ function renderHpBar() {
   for (const entry of state.hpEntries) {
     const pct  = entry.max > 0 ? (entry.current / entry.max) * 100 : 0;
     const card = document.createElement('div');
-    card.className   = 'hp-entry';
-    card.dataset.id  = entry.id;
-
-    card.innerHTML = `
+    card.className  = 'hp-entry';
+    card.dataset.id = entry.id;
+    card.innerHTML  = `
       <div class="hp-entry-name" title="${escapeHtml(entry.name)}">${escapeHtml(entry.name)}</div>
       <div class="hp-bar-visual"><div class="hp-bar-fill" style="width:${pct}%"></div></div>
       <div class="hp-values">${entry.current} / ${entry.max} HP</div>
       <div class="hp-controls">
-        <button class="btn btn-secondary btn-xs" data-action="minus5"  data-id="${entry.id}">-5</button>
-        <button class="btn btn-secondary btn-xs" data-action="minus1"  data-id="${entry.id}">-1</button>
-        <button class="btn btn-secondary btn-xs" data-action="plus1"   data-id="${entry.id}">+1</button>
-        <button class="btn btn-secondary btn-xs" data-action="plus5"   data-id="${entry.id}">+5</button>
-        <button class="btn btn-danger    btn-xs" data-action="remove"  data-id="${entry.id}">&#10005;</button>
+        <button class="btn btn-secondary btn-xs" data-action="minus5" data-id="${entry.id}">-5</button>
+        <button class="btn btn-secondary btn-xs" data-action="minus1" data-id="${entry.id}">-1</button>
+        <button class="btn btn-secondary btn-xs" data-action="plus1"  data-id="${entry.id}">+1</button>
+        <button class="btn btn-secondary btn-xs" data-action="plus5"  data-id="${entry.id}">+5</button>
+        <button class="btn btn-danger    btn-xs" data-action="remove" data-id="${entry.id}">&#10005;</button>
       </div>
     `;
     container.appendChild(card);
@@ -1313,172 +1158,263 @@ function renderHpBar() {
 }
 
 // =====================================================
+// PANE RESIZERS
+// =====================================================
+
+/**
+ * Wires up a draggable column resizer between two elements.
+ *
+ * @param {HTMLElement} resizerEl  - The drag handle
+ * @param {HTMLElement} leftEl    - Left panel
+ * @param {HTMLElement} rightEl   - Right panel
+ * @param {HTMLElement} containerEl - Parent container
+ * @param {number}      minLeft   - Minimum left panel width in px
+ * @param {number}      minRight  - Minimum right panel width in px
+ */
+function makeColResizer(resizerEl, leftEl, rightEl, containerEl, minLeft, minRight) {
+  let dragging = false, startX = 0, startLeftW = 0;
+  resizerEl.addEventListener('mousedown', (e) => {
+    dragging   = true;
+    startX     = e.clientX;
+    startLeftW = leftEl.getBoundingClientRect().width;
+    document.body.style.cursor     = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const totalW  = containerEl.getBoundingClientRect().width;
+    const newLeft = Math.max(minLeft, Math.min(totalW - minRight, startLeftW + (e.clientX - startX)));
+    leftEl.style.flex  = 'none';
+    leftEl.style.width = `${newLeft}px`;
+    rightEl.style.flex  = 'none';
+    rightEl.style.width = `${totalW - newLeft - resizerEl.offsetWidth}px`;
+  });
+  document.addEventListener('mouseup', () => {
+    if (dragging) { dragging = false; document.body.style.cursor = ''; document.body.style.userSelect = ''; }
+  });
+}
+
+/**
+ * Wires up a draggable row resizer between two elements.
+ *
+ * @param {HTMLElement} resizerEl - The drag handle
+ * @param {HTMLElement} topEl    - Top panel
+ * @param {HTMLElement} bottomEl - Bottom panel
+ * @param {number}      minTop   - Minimum top panel height in px
+ * @param {number}      minBottom - Minimum bottom panel height in px
+ */
+function makeRowResizer(resizerEl, topEl, bottomEl, minTop, minBottom) {
+  let dragging = false, startY = 0, startBotH = 0;
+  resizerEl.addEventListener('mousedown', (e) => {
+    dragging  = true;
+    startY    = e.clientY;
+    startBotH = bottomEl.getBoundingClientRect().height;
+    document.body.style.cursor     = 'row-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const delta = startY - e.clientY;
+    const newH  = Math.max(minBottom, Math.min(window.innerHeight - minTop, startBotH + delta));
+    bottomEl.style.height = `${newH}px`;
+  });
+  document.addEventListener('mouseup', () => {
+    if (dragging) { dragging = false; document.body.style.cursor = ''; document.body.style.userSelect = ''; }
+  });
+}
+
+// =====================================================
 // CAMPAIGN SELECT SCREEN
 // =====================================================
 
-function buildCampaignSelect(campaigns, welcomeScreen, app) {
-  const welcomeScreen2 = document.getElementById('campaign-select-screen');
-  welcomeScreen.style.display = 'none';
-  welcomeScreen2.style.display = '';
+/**
+ * Renders the campaign selection screen from discovered campaigns.
+ * Called after the app loads; replaced by the main app once a campaign is chosen.
+ *
+ * @param {Array} campaigns - [{ id, name, path }]
+ */
+function showCampaignSelect(campaigns) {
+  document.getElementById('loading-screen').style.display    = 'none';
+  document.getElementById('campaign-select-screen').style.display = '';
 
   const list = document.getElementById('campaign-list');
   list.innerHTML = '';
 
   for (const campaign of campaigns) {
     const btn = document.createElement('button');
-    btn.className = 'btn campaign-select-btn';
+    btn.className   = 'btn campaign-select-btn';
     btn.textContent = campaign.name;
-    btn.addEventListener('click', async () => {
-      await saveLastCampaignToDB(campaign.id);
-      state.activeCampaign = campaign;
-      state.dirHandle = campaign.handle;
-      welcomeScreen2.classList.add('fade-out');
-      await new Promise(r => setTimeout(r, 250));
-      welcomeScreen2.style.display = 'none';
-      await loadApp(campaign.handle, app);
-    });
+    btn.addEventListener('click', () => loadCampaign(campaign));
     list.appendChild(btn);
   }
+}
 
-  document.getElementById('btn-change-root').addEventListener('click', async () => {
-    await clearHandleFromDB();
-    location.reload();
-  });
+/**
+ * Loads a campaign: fetches all files, builds the UI, shows the main app.
+ *
+ * @param {{ id: string, name: string, path: string }} campaign
+ */
+async function loadCampaign(campaign) {
+  state.activeCampaign = campaign;
+  document.getElementById('campaign-select-screen').style.display = 'none';
+  showLoadingScreen(`Loading ${campaign.name}…`);
+
+  try {
+    state.files = await fetchAllFiles(campaign.path);
+  } catch (e) {
+    showError('Failed to load campaign files: ' + e.message);
+    return;
+  }
+
+  document.getElementById('loading-screen').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+  document.getElementById('app').classList.add('visible', 'fade-in');
+
+  document.getElementById('campaign-name-label').textContent = campaign.name;
+
+  buildSidebar(state.files);
+  renderHpBar();
+  renderPlayerPanel(state.files);
+
+  document.getElementById('content-view').innerHTML = `
+    <div class="empty-state">
+      <div class="empty-title">${escapeHtml(campaign.name)}</div>
+      <p>Select a file from the sidebar to begin.</p>
+      <p style="font-size:0.78rem;color:var(--text-faint)">${state.files.length} files indexed</p>
+    </div>
+  `;
+}
+
+// =====================================================
+// UTILITY
+// =====================================================
+
+/**
+ * Normalises a status string from frontmatter into a CSS class name.
+ *
+ * @param {string} raw
+ * @returns {string} 'complete' | 'in-progress' | 'stub'
+ */
+function normaliseStatus(raw) {
+  if (!raw) return 'stub';
+  const s = raw.toLowerCase();
+  if (s === 'complete' || s === 'done')                        return 'complete';
+  if (s === 'in-progress' || s === 'in progress' || s === 'wip') return 'in-progress';
+  return 'stub';
+}
+
+/**
+ * Derives a human-readable label from a file path by stripping the extension
+ * and replacing hyphens with spaces.
+ *
+ * @param {string} path
+ * @returns {string}
+ */
+function filenameLabel(path) {
+  return path.split('/').pop().replace('.md', '').replace(/-/g, ' ');
+}
+
+/**
+ * Escapes HTML special characters to prevent XSS when inserting into innerHTML.
+ *
+ * @param {string} str
+ * @returns {string}
+ */
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * Escapes a string for safe use as a RegExp pattern.
+ *
+ * @param {string} str
+ * @returns {string}
+ */
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Briefly shows a status message in the toolbar.
+ *
+ * @param {string} message    - The text to show
+ * @param {number} [clearMs]  - If provided, clears the message after this many ms
+ */
+function showSaveStatus(message, clearMs) {
+  const el = document.getElementById('save-status');
+  if (!el) return;
+  el.textContent = message;
+  if (clearMs) setTimeout(() => { el.textContent = ''; }, clearMs);
+}
+
+/**
+ * Shows a dismissable error banner above the content area.
+ *
+ * @param {string} message
+ */
+function showError(message) {
+  // Reuse the content view to surface the error rather than a bare alert,
+  // but also log to console for debugging.
+  console.error(message);
+  alert(message);
+}
+
+/**
+ * Shows the loading screen with an optional status message.
+ *
+ * @param {string} message
+ */
+function showLoadingScreen(message) {
+  const el = document.getElementById('loading-screen');
+  el.style.display = '';
+  const msg = el.querySelector('.loading-message');
+  if (msg) msg.textContent = message;
 }
 
 // =====================================================
 // MAIN INIT
 // =====================================================
 
+/**
+ * Entry point. Called on DOMContentLoaded.
+ * Fetches the list of campaigns from GitHub and shows the selection screen.
+ */
 async function init() {
-  const welcomeScreen = document.getElementById('welcome-screen');
-  const app           = document.getElementById('app');
+  showLoadingScreen('Connecting to GitHub…');
 
-  let savedHandle = null;
   try {
-    savedHandle = await loadHandleFromDB();
+    state.campaigns = await listCampaigns(GITHUB_TOKEN_RW);
   } catch (e) {
-    console.warn('Could not load handle from DB', e);
-  }
-
-  if (savedHandle) {
-    try {
-      const perm = await savedHandle.queryPermission({ mode: 'readwrite' });
-      if (perm === 'granted') {
-        showReconnectOption(savedHandle, welcomeScreen, app);
-        return;
-      }
-    } catch (e) {
-      // Handle no longer valid
-    }
-  }
-
-  showWelcome(welcomeScreen, app);
-}
-
-function showWelcome(welcomeScreen, app) {
-  document.getElementById('btn-open').addEventListener('click', () => pickFolder(welcomeScreen, app));
-}
-
-function showReconnectOption(savedHandle, welcomeScreen, app) {
-  const buttons = document.querySelector('.welcome-buttons');
-  buttons.innerHTML = `
-    <button class="btn" id="btn-reconnect">Reconnect to last folder</button>
-    <button class="btn btn-secondary" id="btn-choose-diff">Choose a different folder</button>
-  `;
-  document.getElementById('btn-reconnect').addEventListener('click', async () => {
-    try {
-      const perm = await savedHandle.requestPermission({ mode: 'readwrite' });
-      if (perm === 'granted') {
-        state.rootHandle = savedHandle;
-        await proceedToCampaignSelect(savedHandle, welcomeScreen, app);
-      } else {
-        alert('Permission denied. Please choose the folder manually.');
-        showPickFallback(welcomeScreen, app, buttons);
-      }
-    } catch (e) {
-      alert('Could not reconnect. Please choose the folder manually.');
-      showPickFallback(welcomeScreen, app, buttons);
-    }
-  });
-  document.getElementById('btn-choose-diff').addEventListener('click', () => pickFolder(welcomeScreen, app));
-}
-
-function showPickFallback(welcomeScreen, app, buttons) {
-  buttons.innerHTML = `<button class="btn" id="btn-open">Open Almanac Folder</button>`;
-  document.getElementById('btn-open').addEventListener('click', () => pickFolder(welcomeScreen, app));
-}
-
-async function pickFolder(welcomeScreen, app) {
-  try {
-    const handle = await window.showDirectoryPicker({ mode: 'readwrite', startIn: 'documents' });
-    await saveHandleToDB(handle);
-    state.rootHandle = handle;
-    await proceedToCampaignSelect(handle, welcomeScreen, app);
-  } catch (e) {
-    if (e.name !== 'AbortError') {
-      alert('Could not open folder: ' + e.message);
-    }
-  }
-}
-
-async function proceedToCampaignSelect(rootHandle, welcomeScreen, app) {
-  const campaigns = await discoverCampaigns(rootHandle);
-  state.campaigns = campaigns;
-
-  if (campaigns.length === 0) {
-    alert('No campaigns found. Make sure you opened the correct root folder (it should contain a "campaigns/" subfolder with at least one campaign folder inside).');
+    document.getElementById('loading-screen').style.display = 'none';
+    document.getElementById('error-screen').style.display  = '';
+    document.getElementById('error-message').textContent   =
+      'Could not connect to GitHub: ' + e.message +
+      '\n\nCheck that your token in shared/config.js is correct and has Contents: Read and write access.';
     return;
   }
 
-  buildCampaignSelect(campaigns, welcomeScreen, app);
-}
-
-async function loadApp(campaignHandle, app) {
-  app.style.display = 'flex';
-  await new Promise(r => requestAnimationFrame(r));
-  app.classList.add('visible', 'fade-in');
-
-  try {
-    state.files = await readDirectory(campaignHandle);
-  } catch (e) {
-    alert('Error reading directory: ' + e.message);
+  if (state.campaigns.length === 0) {
+    document.getElementById('loading-screen').style.display = 'none';
+    document.getElementById('error-screen').style.display  = '';
+    document.getElementById('error-message').textContent   =
+      'No campaigns found in the repository.\n\nMake sure your campaigns/ folder contains at least one subfolder with a campaign.md file inside it.';
     return;
   }
 
-  buildSidebar(state.files);
-  renderHpBar();
-  renderPlayerPanel(state.files);
+  // If there's only one campaign, load it directly without the selection screen
+  if (state.campaigns.length === 1) {
+    await loadCampaign(state.campaigns[0]);
+    return;
+  }
 
-  // Show campaign name in toolbar
-  const campaignName = state.activeCampaign ? state.activeCampaign.name : 'Almanac';
-  document.getElementById('campaign-name-label').textContent = campaignName;
-
-  document.getElementById('content-view').innerHTML = `
-    <div class="empty-state">
-      <div class="empty-title">${escapeHtml(campaignName)}</div>
-      <p>Select a file from the sidebar to begin.</p>
-      <p style="font-size:0.78rem;color:var(--text-faint)">${state.files.length} files indexed</p>
-    </div>
-  `;
-
-  document.getElementById('btn-change-campaign').addEventListener('click', async () => {
-    if (state.campaigns.length > 1) {
-      if (!confirm('Switch campaign? Current session state will be cleared.')) return;
-      // Reset campaign-level state
-      state.files = [];
-      state.currentFile = null;
-      state.dirHandle = null;
-      state.activeCampaign = null;
-      app.classList.remove('visible', 'fade-in');
-      app.style.display = 'none';
-      buildCampaignSelect(state.campaigns, document.getElementById('welcome-screen'), app);
-    } else {
-      if (!confirm('Change root folder? This will reload the Almanac.')) return;
-      await clearHandleFromDB();
-      location.reload();
-    }
-  });
+  showCampaignSelect(state.campaigns);
 }
 
 // =====================================================
@@ -1486,14 +1422,18 @@ async function loadApp(campaignHandle, app) {
 // =====================================================
 
 document.addEventListener('DOMContentLoaded', () => {
+
+  // Main content edit buttons
   document.getElementById('btn-edit').addEventListener('click', enterEditMode);
-  document.getElementById('btn-save').addEventListener('click', saveFile);
+  document.getElementById('btn-save').addEventListener('click', saveMainContent);
   document.getElementById('btn-cancel').addEventListener('click', () => exitEditMode(true));
 
+  // DM notes edit buttons
   document.getElementById('btn-dm-edit').addEventListener('click', enterDmNotesEdit);
   document.getElementById('btn-dm-save').addEventListener('click', saveDmNotes);
   document.getElementById('btn-dm-cancel').addEventListener('click', () => exitDmNotesEdit(true));
 
+  // Format toolbar — main content
   document.getElementById('format-toolbar').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-action]');
     if (!btn || btn.dataset.pane === 'dm') return;
@@ -1502,6 +1442,7 @@ document.addEventListener('DOMContentLoaded', () => {
     applyFormatAction(textarea, btn.dataset.action);
   });
 
+  // Format toolbar — DM notes
   document.getElementById('dm-format-toolbar').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-action]');
     if (!btn) return;
@@ -1510,32 +1451,53 @@ document.addEventListener('DOMContentLoaded', () => {
     applyFormatAction(textarea, btn.dataset.action);
   });
 
-  initPaneResizer();
-  initSidebarResizer();
-  initHpResizer();
-  initHpColResizer();
+  // Resizers
+  makeColResizer(
+    document.getElementById('pane-resizer'),
+    document.getElementById('left-pane'),
+    document.getElementById('right-pane'),
+    document.getElementById('split-pane'),
+    200, 200
+  );
+  makeColResizer(
+    document.getElementById('sidebar-resizer'),
+    document.getElementById('sidebar'),
+    document.getElementById('main-panel'),
+    document.querySelector('.app-body'),
+    140, 300
+  );
+  makeRowResizer(
+    document.getElementById('hp-resizer'),
+    document.getElementById('app'),
+    document.getElementById('hp-bar'),
+    120, 48
+  );
+  makeColResizer(
+    document.getElementById('hp-col-resizer'),
+    document.getElementById('hp-tracker-pane'),
+    document.getElementById('player-panel'),
+    document.getElementById('hp-bar'),
+    180, 130
+  );
 
+  // Search
   const searchInput = document.getElementById('search-input');
   searchInput.addEventListener('input', (e) => doSearch(e.target.value));
   searchInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      searchInput.value = '';
-      doSearch('');
-    }
+    if (e.key === 'Escape') { searchInput.value = ''; doSearch(''); }
   });
 
+  // HP tracker controls
   document.getElementById('hp-entries').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-action]');
     if (!btn) return;
     const id     = parseInt(btn.dataset.id);
     const action = btn.dataset.action;
-    switch (action) {
-      case 'minus5':  adjustHp(id, -5); break;
-      case 'minus1':  adjustHp(id, -1); break;
-      case 'plus1':   adjustHp(id, +1); break;
-      case 'plus5':   adjustHp(id, +5); break;
-      case 'remove':  removeHpEntry(id); break;
-    }
+    if (action === 'minus5') adjustHp(id, -5);
+    if (action === 'minus1') adjustHp(id, -1);
+    if (action === 'plus1')  adjustHp(id, +1);
+    if (action === 'plus5')  adjustHp(id, +5);
+    if (action === 'remove') removeHpEntry(id);
   });
 
   document.getElementById('btn-add-enemy').addEventListener('click', () => {
@@ -1550,6 +1512,19 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-clear-hp').addEventListener('click', () => {
     if (state.hpEntries.length === 0) return;
     if (confirm('Clear all HP trackers?')) clearAllHp();
+  });
+
+  // Campaign switch button
+  document.getElementById('btn-change-campaign').addEventListener('click', async () => {
+    if (state.campaigns.length > 1) {
+      if (!confirm('Switch campaign? The current view will be cleared.')) return;
+      state.files       = [];
+      state.currentFile = null;
+      state.activeCampaign = null;
+      document.getElementById('app').classList.remove('visible', 'fade-in');
+      document.getElementById('app').style.display = 'none';
+      showCampaignSelect(state.campaigns);
+    }
   });
 
   init();
