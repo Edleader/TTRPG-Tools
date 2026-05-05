@@ -10,7 +10,7 @@ effect: 2+d4
 slots: active
 value: 15
 notes: Classic
-player_slot: active
+player_slot: hand
 ---
 
 A wooden or aluminium bat. Satisfying swing, wide arc, and nobody questions what it is.
