@@ -135,6 +135,15 @@ export function firebaseLootPath(campaignId) {
   return `campaigns/${campaignId}/loot`;
 }
 
+/**
+ * Returns the Firebase path for the active trade pool.
+ * @param {string} campaignId - e.g. "campaign-01"
+ * @returns {string}
+ */
+export function firebaseTradePath(campaignId) {
+  return `campaigns/${campaignId}/trades`;
+}
+
 // ─── App constants ─────────────────────────────────────────────────────────────
 
 /** Milliseconds to wait after an HP change before writing back to GitHub. */

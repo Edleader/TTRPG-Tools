@@ -170,6 +170,7 @@
     <!-- ── REST BUTTONS ───────────────────────────── -->
     <section class="sheet-section rest-section">
       <button class="btn btn-rest btn-arrange-rest" id="btn-arrange-cards" disabled>Arrange Cards</button>
+      <button class="btn btn-rest btn-arrange-rest" id="btn-trade-cards" disabled>Trade Cards</button>
       <button class="btn btn-rest" id="btn-short-rest">Short Rest</button>
       <button class="btn btn-rest btn-long-rest" id="btn-long-rest">Long Rest</button>
     </section>
@@ -300,6 +301,56 @@
       <div class="arrange-footer">
         <button class="btn btn-secondary btn-sm" id="btn-arrange-cancel">Cancel</button>
         <button class="btn btn-sm" id="btn-arrange-finalise">Finish Arranging</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── TRADE CARDS OVERLAY ──────────────────────────────
+       Two sections:
+         TOP: Others' Offers — cards other players have put up
+         BOTTOM: Your Cards (hand+active) | Your Offer zone
+       ─────────────────────────────────────────────── -->
+  <div id="trade-overlay" class="arrange-overlay" style="display:none" role="dialog" aria-modal="true" aria-label="Trade cards">
+    <div class="arrange-dialog trade-dialog">
+
+      <div class="arrange-header">
+        <span class="arrange-title">Trade Cards</span>
+      </div>
+
+      <div class="trade-body">
+
+        <!-- TOP: Community offers from other players -->
+        <div class="trade-community-section" id="trade-community-section">
+          <div class="trade-section-label">Others' Offers</div>
+          <div class="trade-community-cards" id="trade-community-cards">
+            <span class="trade-empty-hint">No cards on offer from other players.</span>
+          </div>
+        </div>
+
+        <div class="trade-divider"></div>
+
+        <!-- BOTTOM: Your cards and your offer zone -->
+        <div class="trade-bottom">
+
+          <div class="arrange-col trade-col-yours">
+            <div class="arrange-col-header">Your Cards</div>
+            <p class="arrange-discard-hint">Drag a card to Your Offer to put it up for trade.</p>
+            <div class="arrange-drop-zone" id="trade-yours-zone" data-zone="yours"></div>
+          </div>
+
+          <div class="arrange-col trade-col-offer">
+            <div class="arrange-col-header">Your Offer</div>
+            <p class="arrange-discard-hint">Cards here are visible to all players. You must retract or have them claimed before closing.</p>
+            <div class="arrange-drop-zone" id="trade-offer-zone" data-zone="offer"></div>
+          </div>
+
+        </div>
+
+      </div>
+
+      <div class="arrange-footer">
+        <button class="btn btn-secondary btn-sm" id="btn-trade-close">Close</button>
       </div>
 
     </div>

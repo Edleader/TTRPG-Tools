@@ -27,6 +27,7 @@ import {
   firebasePlayerPath,
   firebaseCampaignPath,
   firebaseLootPath,
+  firebaseTradePath,
   HP_DEBOUNCE_MS,
 } from '../shared/config.js';
 
@@ -648,6 +649,7 @@ function subscribeFirebase() {
     document.getElementById('session-banner').style.display =
       state.sessionActive ? 'none' : '';
     document.getElementById('btn-arrange-cards').disabled = !state.sessionActive;
+    document.getElementById('btn-trade-cards').disabled   = !state.sessionActive;
 
     // Live HP sync — update display if another tab/device changed HP
     const playerData   = (data.session || {})[state.characterSlug] || {};
@@ -673,6 +675,352 @@ function subscribeFirebase() {
   });
 
   state._fbUnsub = unsubscribe;
+
+  // Subscribe to trade pool separately
+  subscribeTradePool();
+}
+
+// =====================================================
+// TRADE — CARD TRADING BETWEEN PLAYERS
+// =====================================================
+
+// Trade state
+const _trade = {
+  yours:      [],  // card objects in "Your Cards" zone (hand + active)
+  offered:    [],  // card objects in "Your Offer" zone (published to Firebase)
+  community:  [],  // cards offered by OTHER players (from Firebase)
+  _fbUnsub:   null,
+};
+
+/**
+ * Subscribes to the campaign trade pool.
+ * Updates the community offers display whenever Firebase changes.
+ */
+function subscribeTradePool() {
+  if (_trade._fbUnsub) _trade._fbUnsub();
+  if (!state.campaignId) return;
+
+  const tradeRef = ref(db, firebaseTradePath(state.campaignId));
+  _trade._fbUnsub = onValue(tradeRef, (snapshot) => {
+    const data = snapshot.val() || {};
+    const all  = Object.entries(data).map(([key, c]) => ({ key, ...c }));
+    // Community = offers from other players
+    _trade.community = all.filter(c => c.offeredBy !== state.characterSlug);
+    // Re-sync my offered list in case another player triggered a change
+    _trade.offered = all.filter(c => c.offeredBy === state.characterSlug);
+
+    if (document.getElementById('trade-overlay').style.display !== 'none') {
+      renderTradeCommunity();
+      renderTradeOfferZone();
+    }
+  });
+}
+
+/**
+ * Opens the Trade overlay and renders initial state.
+ */
+function openTradeOverlay() {
+  _trade.yours   = [...(state._activeCards || []), ...(state._handCards || [])];
+  _trade.offered = []; // will be populated by Firebase subscription
+
+  renderTradeYoursZone();
+  renderTradeCommunity();
+  renderTradeOfferZone();
+
+  document.getElementById('trade-overlay').style.display = '';
+}
+
+/**
+ * Attempts to close the trade overlay.
+ * Blocked if the player still has cards in the offer zone.
+ */
+function closeTradeOverlay() {
+  if (_trade.offered.length > 0) {
+    alert('You still have cards on offer. Retract them first, or wait for another player to claim them.');
+    return;
+  }
+  document.getElementById('trade-overlay').style.display = 'none';
+  _trade.yours = [];
+}
+
+/**
+ * Renders the "Your Cards" zone — all cards the player currently owns
+ * that are not already in their offer zone.
+ */
+function renderTradeYoursZone() {
+  const zone = document.getElementById('trade-yours-zone');
+  zone.innerHTML = '';
+
+  const offeredPaths = new Set(_trade.offered.map(c => c.cardPath + '|' + c.name));
+  const available    = _trade.yours.filter(c => !offeredPaths.has(c._path ? (c._path + '|' + (c.name || '')) : ''));
+
+  if (available.length === 0) {
+    zone.innerHTML = '<div class="arrange-empty">No cards available.</div>';
+    return;
+  }
+
+  for (const card of available) {
+    zone.appendChild(makeTradeCardTile(card, 'yours'));
+  }
+}
+
+/**
+ * Renders your own offer zone from _trade.offered (synced from Firebase).
+ */
+function renderTradeOfferZone() {
+  const zone = document.getElementById('trade-offer-zone');
+  zone.innerHTML = '';
+
+  if (_trade.offered.length === 0) {
+    zone.innerHTML = '<div class="arrange-empty">Empty — drag a card here to offer it.</div>';
+    return;
+  }
+
+  for (const card of _trade.offered) {
+    const tile = document.createElement('div');
+    tile.className = 'arrange-card-tile card-type-' + (card.card_type || 'item').toLowerCase() + ' trade-offered-tile';
+    tile.innerHTML = `
+      <div class="arrange-card-body">
+        <div class="arrange-card-type">${escapeHtml(card.card_type || '')}</div>
+        <div class="arrange-card-name">${escapeHtml(card.name || '')}</div>
+        <div class="arrange-card-slot">${escapeHtml(card.slots || 'hand')}</div>
+      </div>
+      <button class="btn btn-sm trade-retract-btn" data-key="${escapeHtml(card.key)}">Retract</button>
+    `;
+    tile.querySelector('.arrange-card-name').addEventListener('click', () => openCardModal(card));
+    tile.querySelector('.trade-retract-btn').addEventListener('click', () => retractTradeOffer(card.key));
+    zone.appendChild(tile);
+  }
+}
+
+/**
+ * Renders community offers (cards offered by other players).
+ */
+function renderTradeCommunity() {
+  const container = document.getElementById('trade-community-cards');
+  container.innerHTML = '';
+
+  if (_trade.community.length === 0) {
+    container.innerHTML = '<span class="trade-empty-hint">No cards on offer from other players.</span>';
+    return;
+  }
+
+  for (const card of _trade.community) {
+    const tile = document.createElement('div');
+    tile.className = 'arrange-card-tile card-type-' + (card.card_type || 'item').toLowerCase() + ' trade-community-tile';
+    tile.innerHTML = `
+      <div class="arrange-card-body">
+        <div class="arrange-card-type">${escapeHtml(card.card_type || '')}</div>
+        <div class="arrange-card-name">${escapeHtml(card.name || '')}</div>
+        <div class="arrange-card-slot">From: ${escapeHtml(card.offeredBy)}</div>
+      </div>
+      <button class="btn btn-sm trade-claim-btn" data-key="${escapeHtml(card.key)}">Claim</button>
+    `;
+    tile.querySelector('.arrange-card-name').addEventListener('click', () => openCardModal(card));
+    tile.querySelector('.trade-claim-btn').addEventListener('click', () => claimTradeCard(card));
+    container.appendChild(tile);
+  }
+}
+
+/**
+ * Builds a draggable card tile for the "Your Cards" zone.
+ */
+function makeTradeCardTile(card, zone) {
+  const tile = document.createElement('div');
+  tile.className = 'arrange-card-tile card-type-' + (card.card_type || 'item').toLowerCase();
+  tile.innerHTML = `
+    <div class="arrange-drag-handle" title="Drag to offer">&#8942;&#8942;&#8942;</div>
+    <div class="arrange-card-body">
+      <div class="arrange-card-type">${escapeHtml(card.card_type || '')}</div>
+      <div class="arrange-card-name">${escapeHtml(card.name || '')}</div>
+      <div class="arrange-card-slot">${escapeHtml(card.player_slot || card.slots || 'hand')}</div>
+    </div>
+  `;
+  tile.querySelector('.arrange-card-name').addEventListener('click', () => openCardModal(card));
+  tile.querySelector('.arrange-drag-handle').addEventListener('pointerdown', (e) => {
+    tradeDragStart(e, tile, card);
+  });
+  return tile;
+}
+
+// ─── Trade drag-and-drop ──────────────────────────────────────────────────────
+
+const _tradeDrag = {
+  active:   false,
+  sourceEl: null,
+  ghost:    null,
+  card:     null,
+  fromZone: null,
+  offsetX:  0,
+  offsetY:  0,
+};
+
+function tradeDragStart(e, tile, card) {
+  if (e.button !== undefined && e.button !== 0) return;
+  e.preventDefault();
+  e.stopPropagation();
+
+  const rect = tile.getBoundingClientRect();
+  _tradeDrag.active   = true;
+  _tradeDrag.sourceEl = tile;
+  _tradeDrag.card     = card;
+  _tradeDrag.fromZone = tile.closest('[data-zone]')?.dataset.zone || null;
+  _tradeDrag.offsetX  = e.clientX - rect.left;
+  _tradeDrag.offsetY  = e.clientY - rect.top;
+
+  const ghost = tile.cloneNode(true);
+  ghost.className   = 'arrange-card-tile arrange-drag-ghost';
+  ghost.style.width = `${rect.width}px`;
+  ghost.style.left  = `${rect.left}px`;
+  ghost.style.top   = `${rect.top}px`;
+  document.body.appendChild(ghost);
+  _tradeDrag.ghost = ghost;
+  tile.classList.add('arrange-drag-source');
+
+  document.addEventListener('pointermove', tradeDragMove, { capture: true });
+  document.addEventListener('pointerup',   tradeDragEnd,  { capture: true });
+}
+
+function tradeDragMove(e) {
+  if (!_tradeDrag.active) return;
+  _tradeDrag.ghost.style.left = `${e.clientX - _tradeDrag.offsetX}px`;
+  _tradeDrag.ghost.style.top  = `${e.clientY - _tradeDrag.offsetY}px`;
+}
+
+async function tradeDragEnd(e) {
+  if (!_tradeDrag.active) return;
+  _tradeDrag.active = false;
+  _tradeDrag.ghost.remove();
+  _tradeDrag.ghost = null;
+  _tradeDrag.sourceEl.classList.remove('arrange-drag-source');
+  document.removeEventListener('pointermove', tradeDragMove, { capture: true });
+  document.removeEventListener('pointerup',   tradeDragEnd,  { capture: true });
+
+  // Determine which zone the pointer landed in
+  const offerZone  = document.getElementById('trade-offer-zone');
+  const yoursZone  = document.getElementById('trade-yours-zone');
+  const offerRect  = offerZone.getBoundingClientRect();
+  const yoursRect  = yoursZone.getBoundingClientRect();
+
+  const inOffer = e.clientX >= offerRect.left && e.clientX <= offerRect.right &&
+                  e.clientY >= offerRect.top  && e.clientY <= offerRect.bottom;
+  const inYours = e.clientX >= yoursRect.left && e.clientX <= yoursRect.right &&
+                  e.clientY >= yoursRect.top  && e.clientY <= yoursRect.bottom;
+
+  if (inOffer && _tradeDrag.fromZone === 'yours') {
+    await publishTradeOffer(_tradeDrag.card);
+  }
+  // Retracting by dragging back to yours is handled by the Retract button instead
+  // (simpler and more reliable on touch screens)
+  renderTradeYoursZone();
+}
+
+// ─── Trade Firebase operations ────────────────────────────────────────────────
+
+/**
+ * Publishes a card to the trade pool in Firebase.
+ * The card's file is NOT deleted from GitHub — it stays in the player's inventory
+ * until another player claims it, at which point it is moved.
+ */
+async function publishTradeOffer(card) {
+  if (!card._path) return; // safety — only inventory cards can be traded
+  const tradeRef = ref(db, firebaseTradePath(state.campaignId));
+  const newEntry = ref(db, `${firebaseTradePath(state.campaignId)}/${Date.now()}_${state.characterSlug}`);
+  await set(newEntry, {
+    offeredBy:  state.characterSlug,
+    cardPath:   card._path,
+    name:       card.name       || '',
+    card_type:  card.card_type  || '',
+    slots:      card.player_slot || card.slots || 'hand',
+    offeredAt:  Date.now(),
+  });
+  // _trade.offered will be updated by the onValue subscription
+}
+
+/**
+ * Retracts a card from the trade pool — removes it from Firebase.
+ * The card stays in the player's inventory.
+ */
+async function retractTradeOffer(key) {
+  await remove(ref(db, `${firebaseTradePath(state.campaignId)}/${key}`)).catch(() => {});
+}
+
+/**
+ * Claims a card from the trade pool. Uses a Firebase transaction to prevent
+ * two players claiming the same card simultaneously.
+ * Moves the card file from the offering player's inventory to this player's
+ * inventory (copy + delete), then removes the trade entry.
+ */
+async function claimTradeCard(card) {
+  const tradeRef = ref(db, `${firebaseTradePath(state.campaignId)}/${card.key}`);
+
+  // Pre-read to catch already-gone cards before the transaction
+  const snap = await get(tradeRef);
+  if (!snap.val()) { alert('That card is no longer available.'); return; }
+
+  const result = await runTransaction(tradeRef, (current) => {
+    if (!current || current.claimedBy) return; // abort
+    return { ...current, claimedBy: state.characterSlug };
+  }).catch(() => null);
+
+  if (!result?.committed) {
+    alert('Someone else claimed that card first.');
+    return;
+  }
+
+  // Determine slot — use same space-check logic as loot
+  const fm        = state.fm;
+  const maxActive = fm.active_slots || 4;
+  const maxHand   = fm.hand_slots   || 4;
+  const curActive = (state._activeCards || []).length;
+  const curHand   = (state._handCards   || []).length;
+  const hasSpace  = curActive < maxActive || curHand < maxHand;
+
+  const preferredSlot = (card.slots || 'hand') === 'active' && curActive < maxActive ? 'active' : 'hand';
+
+  // Deliver card to this player's inventory (copy from offerer's path)
+  const incomingCard = {
+    key:       card.key,
+    cardPath:  card.cardPath,
+    name:      card.name,
+    card_type: card.card_type,
+    slots:     card.slots,
+    assignTo:  state.characterSlug,
+  };
+
+  if (hasSpace) {
+    const actualSlot = preferredSlot === 'active' && curActive < maxActive ? 'active'
+                     : curHand < maxHand ? 'hand' : 'active';
+    await deliverTradeCard(incomingCard, actualSlot);
+  } else {
+    state.lootNotifyCards = [incomingCard];
+    openArrangeOverlay({ incoming: [incomingCard], context: 'loot-group', preferredSlot });
+  }
+
+  // Remove the trade entry now that delivery is done (or in-progress via arrange)
+  await remove(tradeRef).catch(() => {});
+}
+
+/**
+ * Delivers a traded card to this player's inventory and deletes it from the
+ * offering player's inventory.
+ *
+ * @param {object} card       - Trade card object (has .cardPath pointing to offerer's file)
+ * @param {string} playerSlot - 'hand' or 'active'
+ */
+async function deliverTradeCard(card, playerSlot) {
+  // card.cardPath is the offering player's file path — copy it to this player
+  await deliverCardToPlayer(card, state.characterSlug, playerSlot);
+
+  // Delete from the offering player's inventory
+  try {
+    const { sha } = await readFile(card.cardPath);
+    await deleteFile(card.cardPath, sha, `Trade: ${card.name} to ${state.characterSlug}`);
+  } catch (e) {
+    console.warn('Could not delete traded card from offerer inventory:', e);
+  }
+
+  await loadAndRenderCards();
 }
 
 // =====================================================
@@ -1540,7 +1888,8 @@ async function finaliseArrange() {
 // =====================================================
 
 function logout() {
-  if (state._fbUnsub) { state._fbUnsub(); state._fbUnsub = null; }
+  if (state._fbUnsub)    { state._fbUnsub();    state._fbUnsub    = null; }
+  if (_trade._fbUnsub)   { _trade._fbUnsub();   _trade._fbUnsub   = null; }
   clearTimeout(state._hpTimer);
   // Reset state
   Object.assign(state, {
@@ -1673,6 +2022,10 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.getElementById('btn-arrange-cancel').addEventListener('click', closeArrangeOverlay);
   document.getElementById('btn-arrange-finalise').addEventListener('click', finaliseArrange);
+
+  // Trade Cards overlay buttons
+  document.getElementById('btn-trade-cards').addEventListener('click', openTradeOverlay);
+  document.getElementById('btn-trade-close').addEventListener('click', closeTradeOverlay);
 
   // Group loot overlay buttons
   // Note: individual claim buttons are wired inside renderGroupLootCards via event delegation

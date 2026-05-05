@@ -1182,3 +1182,117 @@ html, body {
   flex-shrink:     0;
 }
 
+/* ─── Trade Cards overlay ─────────────────────────── */
+
+.trade-dialog {
+  height: min(640px, 94vh);
+}
+
+.trade-body {
+  display:        flex;
+  flex-direction: column;
+  flex:           1;
+  min-height:     0;
+  overflow:       hidden;
+}
+
+/* Community offers row — scrollable horizontal strip at the top */
+.trade-community-section {
+  flex-shrink:   0;
+  padding:       0.5rem 0.75rem 0.4rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.trade-section-label {
+  font-size:      0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color:          var(--text-sub);
+  font-weight:    600;
+  margin-bottom:  0.35rem;
+}
+
+.trade-community-cards {
+  display:    flex;
+  gap:        0.6rem;
+  overflow-x: auto;
+  padding-bottom: 0.3rem;
+  min-height: 80px;
+  align-items: flex-start;
+}
+
+.trade-empty-hint {
+  font-size: 0.82rem;
+  color:     var(--text-faint);
+  padding:   0.5rem 0;
+}
+
+.trade-divider {
+  height:     1px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+/* Bottom half — your cards + offer zone side by side */
+.trade-bottom {
+  display:    flex;
+  flex:       1;
+  gap:        0.75rem;
+  overflow:   hidden;
+  padding:    0.75rem;
+  min-height: 0;
+}
+
+.trade-col-yours { flex: 1; min-width: 0; }
+.trade-col-offer { flex: 0 0 280px; }
+
+.trade-col-yours .arrange-drop-zone,
+.trade-col-offer .arrange-drop-zone {
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  flex:       1;
+  min-height: 0;
+}
+
+/* Offered tile — shows retract button */
+.trade-offered-tile {
+  display:        flex;
+  flex-direction: column;
+  gap:            0.3rem;
+  padding-bottom: 0.4rem;
+}
+
+.trade-offered-tile .arrange-card-body { flex: 1; }
+
+.trade-retract-btn {
+  display:    block;
+  width:      calc(100% - 1.3rem);
+  margin:     0 0.65rem;
+  font-size:  0.72rem !important;
+  padding:    3px 6px !important;
+  color:      var(--danger) !important;
+  border-color: var(--danger) !important;
+  background: transparent !important;
+}
+.trade-retract-btn:hover {
+  background: rgba(224,85,85,0.15) !important;
+}
+
+/* Community tile — shown in the top strip */
+.trade-community-tile {
+  flex-shrink:    0;
+  width:          140px;
+  display:        flex;
+  flex-direction: column;
+  gap:            0.3rem;
+  padding-bottom: 0.4rem;
+}
+.trade-community-tile .arrange-card-body { flex: 1; }
+
+.trade-claim-btn {
+  display:    block;
+  width:      calc(100% - 1.3rem);
+  margin:     0 0.65rem;
+  font-size:  0.72rem !important;
+  padding:    3px 6px !important;
+}
+
