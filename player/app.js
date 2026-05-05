@@ -851,6 +851,45 @@ async function deliverCardToPlayer(card, slug, playerSlot) {
 }
 
 /**
+ * Sends a single incoming card to the group loot pool.
+ * Removes it from the incoming zone and re-renders; if no incoming cards remain,
+ * closes the arrange overlay since there is nothing left to place.
+ *
+ * @param {object} card - The loot card to send to group
+ */
+async function sendSingleCardToGroup(card) {
+  const cardRef = ref(db, `${firebaseLootPath(state.campaignId)}/cards/${card.key}`);
+  await set(cardRef, {
+    cardPath:   card.cardPath,
+    name:       card.name      || '',
+    card_type:  card.card_type || '',
+    slots:      card.slots     || 'hand',
+    assignTo:   'group',
+    forceGroup: true,
+    claimedBy:  null,
+    resolvedAt: null,
+  }).catch(() => {});
+
+  // Remove from incoming zone and notify cards list
+  _arrange.incoming = _arrange.incoming.filter(c => c !== card);
+  _arrange.allCards = _arrange.allCards.filter(c => c !== card);
+  state.lootNotifyCards = state.lootNotifyCards.filter(c => c !== card);
+
+  if (_arrange.incoming.length === 0) {
+    // Nothing left to place — close the overlay
+    const incomingCol = document.getElementById('arrange-incoming-col');
+    incomingCol.style.display = 'none';
+    document.getElementById('arrange-title').textContent = 'Arrange Cards';
+    document.getElementById('btn-arrange-finalise').textContent = 'Finish Arranging';
+    document.getElementById('btn-loot-send-to-group').style.display = 'none';
+    _arrange.context = 'standalone';
+    renderArrangeZones();
+  } else {
+    renderArrangeZones();
+  }
+}
+
+/**
  * Sends the player's notify cards to the group pool instead.
  */
 async function sendNotifyCardsToGroup() {
@@ -1091,9 +1130,10 @@ const _arrange = {
   active:       [],  // card objects currently in the active zone
   hand:         [],  // card objects currently in the hand zone
   discard:      [],  // card objects staged for discard
-  incoming:     [],  // loot cards waiting to be placed (read-only in zone)
+  incoming:     [],  // loot cards in the incoming zone
+  allCards:     [],  // master list of every card in the session (never changes)
   context:      null, // 'standalone' | 'loot-player' | 'loot-group'
-  preferredSlot: null, // for group claims: 'hand' or 'active'
+  preferredSlot: null,
 };
 
 /**
@@ -1111,14 +1151,15 @@ function openArrangeOverlay({ incoming = [], context = 'standalone', preferredSl
   _arrange.incoming      = incoming;
   _arrange.context       = context;
   _arrange.preferredSlot = preferredSlot;
+  // Master list built once — used by drag-end to resolve card IDs regardless of current zone
+  _arrange.allCards      = [..._arrange.active, ..._arrange.hand, ..._arrange.incoming];
 
   // Show/hide the incoming column
   const incomingCol = document.getElementById('arrange-incoming-col');
   incomingCol.style.display = incoming.length > 0 ? '' : 'none';
 
-  // Show/hide "Send to Group" button (only for loot contexts)
-  const sendGroupBtn = document.getElementById('btn-loot-send-to-group');
-  sendGroupBtn.style.display = (context === 'loot-player') ? '' : 'none';
+  // Blanket "Send to Group" button is replaced by per-card buttons — always hidden
+  document.getElementById('btn-loot-send-to-group').style.display = 'none';
 
   // Update the title
   const title = document.getElementById('arrange-title');
@@ -1197,18 +1238,27 @@ function renderArrangeZone(zoneId, cards, incoming) {
       ? `Incoming · needs ${escapeHtml(card.slots || 'hand')}`
       : escapeHtml(card.player_slot || card.slots || 'hand');
 
+    const sendToGroupBtn = (incoming && _arrange.context === 'loot-player')
+      ? `<button class="btn btn-sm arrange-send-group-btn" data-card-id="${escapeHtml(cardId)}" title="Send to group loot instead">Send to Group</button>`
+      : '';
+
     tile.innerHTML = `
       <div class="arrange-drag-handle" title="Drag to move">&#8942;&#8942;&#8942;</div>
       <div class="arrange-card-body">
         <div class="arrange-card-type">${escapeHtml(card.card_type || '')}</div>
         <div class="arrange-card-name">${escapeHtml(card.name || '')}</div>
         <div class="arrange-card-slot">${slotLabel}</div>
+        ${sendToGroupBtn}
       </div>
     `;
     tile.querySelector('.arrange-card-name').addEventListener('click', () => openCardModal(card));
     tile.querySelector('.arrange-drag-handle').addEventListener('pointerdown', (e) => {
       arrangeDragStart(e, tile, card);
     });
+    const sgBtn = tile.querySelector('.arrange-send-group-btn');
+    if (sgBtn) {
+      sgBtn.addEventListener('click', () => sendSingleCardToGroup(card));
+    }
 
     zone.appendChild(tile);
   }
@@ -1322,7 +1372,8 @@ function arrangeDragEnd(e) {
 
   // Sync _arrange arrays from the current DOM positions — includes incoming zone
   // since incoming cards are now draggable into active/hand.
-  const allCards = [..._arrange.active, ..._arrange.hand, ..._arrange.discard, ..._arrange.incoming];
+  // Use the master list built at overlay-open time — zone arrays are stale after moves.
+  const allCards = _arrange.allCards;
 
   function resolveCardId(id) {
     return allCards.find(c => {

@@ -80,6 +80,9 @@ html, body {
 }
 .btn:hover  { background: var(--accent-dim); border-color: var(--accent); }
 .btn:active { opacity: 0.8; }
+.btn-sm { padding: 0.3rem 0.65rem; font-size: 0.8rem; }
+.btn-secondary { background: transparent; color: var(--text-sub); border-color: var(--border); }
+.btn-secondary:hover { background: var(--surface-2); border-color: var(--text-sub); color: var(--text); }
 
 /* ── Login Screen ──────────────────────────────────────────── */
 #login-screen {
@@ -998,6 +1001,7 @@ html, body {
   gap:        0.75rem;
   overflow:   hidden;
   padding:    0.75rem;
+  min-height: 0;
 }
 
 /* Column layout */
@@ -1006,11 +1010,13 @@ html, body {
   flex-direction: column;
   gap:            0.4rem;
   overflow:       hidden;
+  min-height:     0;
 }
 
-.arrange-col-incoming { flex: 0 0 160px; }
+/* Incoming/discard: 2 cards wide. Each card ~130px + gap → ~280px */
+.arrange-col-incoming { flex: 0 0 280px; }
 .arrange-col-centre   { flex: 1; min-width: 0; }
-.arrange-col-discard  { flex: 0 0 160px; }
+.arrange-col-discard  { flex: 0 0 280px; }
 
 .arrange-col-header {
   font-size:      0.72rem;
@@ -1028,27 +1034,27 @@ html, body {
 /* Drop zones — grid matching the real card page */
 .arrange-drop-zone {
   display:               grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   gap:                   0.6rem;
   align-content:         start;
   overflow-y:            auto;
   border:                1px dashed var(--border);
   border-radius:         6px;
   padding:               0.5rem;
-  min-height:            130px;
 }
 
-/* Active and hand each get half the centre column */
+/* Centre column (active + hand): 5 cards wide, equal height split */
 .arrange-col-centre .arrange-drop-zone {
-  flex: 1 1 0;
-  min-height: 120px;
+  grid-template-columns: repeat(5, 1fr);
+  flex:       1 1 0;
+  min-height: 0;
 }
 
-/* Incoming and discard columns — single column list */
+/* Incoming and discard: 2 cards wide, ~3 rows tall */
 .arrange-col-incoming .arrange-drop-zone,
 .arrange-col-discard  .arrange-drop-zone {
-  grid-template-columns: 1fr;
-  min-height: 100px;
+  grid-template-columns: repeat(2, 1fr);
+  flex:       1;
+  min-height: 0;
 }
 
 /* Card tiles inside the arrange overlay — match the real card-tile look */
@@ -1122,6 +1128,22 @@ html, body {
   background:        rgba(108, 142, 245, 0.08);
 }
 .arrange-card-incoming .arrange-card-slot { color: var(--accent-dim); }
+
+/* Per-card "Send to Group" button inside incoming tiles */
+.arrange-send-group-btn {
+  display:     block;
+  width:       100%;
+  margin-top:  0.4rem;
+  font-size:   0.72rem !important;
+  padding:     3px 6px !important;
+  color:       var(--text-faint) !important;
+  border-color: var(--border) !important;
+}
+.arrange-send-group-btn:hover {
+  color:        var(--text-sub) !important;
+  border-color: var(--text-sub) !important;
+  background:   transparent !important;
+}
 
 /* Ghost clone while dragging */
 .arrange-drag-ghost {

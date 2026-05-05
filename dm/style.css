@@ -1702,11 +1702,19 @@ html, body {
    DISTRIBUTE LOOT — DM MODAL & OBSERVER
    ===================================================== */
 
-.btn-loot {
-  background: var(--accent);
-  color: #fff;
+/* Session + loot buttons: dark fill at rest, gold fill on hover */
+.btn-loot,
+#btn-session-toggle {
+  background:   var(--panel-bg);
+  border-color: var(--accent);
+  color:        var(--accent);
 }
-.btn-loot:hover { filter: brightness(1.15); }
+.btn-loot:hover,
+#btn-session-toggle:hover {
+  background: var(--accent);
+  color:      #1a1a1a;
+  filter:     none;
+}
 
 /* Full-screen overlay backdrop */
 .loot-modal-overlay {

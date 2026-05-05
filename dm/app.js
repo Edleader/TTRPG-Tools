@@ -1125,6 +1125,19 @@ function renderPlayerPanel(files) {
     const liveHp = state.playerHpLive[slug];
     const currentHp = liveHp !== undefined ? liveHp : (fm.hp_current !== undefined ? fm.hp_current : maxHp);
 
+    // Populate spell slots from frontmatter if Firebase hasn't pushed yet
+    if (!state.playerSlotsLive[slug] && fm.mind !== undefined && fm.level !== undefined) {
+      const mind    = fm.mind || 0;
+      const level   = fm.level || 1;
+      const maxSlots = Math.min(6, Math.floor(mind / 2)) + (mind > 12 ? level : 0);
+      if (maxSlots > 0) {
+        state.playerSlotsLive[slug] = {
+          spent: typeof fm.spell_slots_spent === 'number' ? fm.spell_slots_spent : 0,
+          max:   maxSlots,
+        };
+      }
+    }
+
     const card = document.createElement('div');
     card.className      = 'player-card';
     card.dataset.slug   = slug;
@@ -1142,12 +1155,17 @@ function renderPlayerPanel(files) {
         <span class="player-hp-sep">/</span>
         <span class="player-hp-max">${escapeHtml(String(maxHp))}</span>
       </div>
-      <div class="player-card-slots" id="pslots-${escapeHtml(slug)}" style="display:none">
-        <span class="player-hp-label">Slots</span>
-        <span class="player-slots-avail" id="pslots-avail-${escapeHtml(slug)}">–</span>
-        <span class="player-hp-sep">/</span>
-        <span class="player-slots-max"  id="pslots-max-${escapeHtml(slug)}">–</span>
-      </div>
+      ${(() => {
+        const s = state.playerSlotsLive[slug];
+        if (!s || s.max <= 0) return '';
+        const avail = s.max - s.spent;
+        return `<div class="player-card-slots" id="pslots-${escapeHtml(slug)}">
+          <span class="player-hp-label">Slots</span>
+          <span class="player-slots-avail" id="pslots-avail-${escapeHtml(slug)}">${avail}</span>
+          <span class="player-hp-sep">/</span>
+          <span class="player-slots-max"  id="pslots-max-${escapeHtml(slug)}">${s.max}</span>
+        </div>`;
+      })()}
       <div class="player-card-perks">
         ${makePerkRow('Lv5',  fm.perk_5  || '')}
         ${makePerkRow('Lv10', fm.perk_10 || '')}
