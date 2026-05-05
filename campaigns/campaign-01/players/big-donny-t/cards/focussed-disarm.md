@@ -3,7 +3,7 @@ card_type: ability
 name: Focussed Disarm
 generation: 1
 slots: active
-player_slot: active
+player_slot: hand
 ---
 
 **To play:** Primary Action
