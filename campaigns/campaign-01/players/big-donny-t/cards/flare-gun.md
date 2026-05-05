@@ -10,7 +10,7 @@ effect: 2+d4
 slots: active
 value: 30
 notes: Technically a signalling device
-player_slot: hand
+player_slot: active
 ---
 
 A single-shot pistol that fires a burning magnesium flare. Technically for signalling distress. Works fine for causing it too.
