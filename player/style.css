@@ -1129,21 +1129,6 @@ html, body {
 }
 .arrange-card-incoming .arrange-card-slot { color: var(--accent-dim); }
 
-/* Per-card "Send to Group" button inside incoming tiles */
-.arrange-send-group-btn {
-  display:     block;
-  width:       100%;
-  margin-top:  0.4rem;
-  font-size:   0.72rem !important;
-  padding:     3px 6px !important;
-  color:       var(--text-faint) !important;
-  border-color: var(--border) !important;
-}
-.arrange-send-group-btn:hover {
-  color:        var(--text-sub) !important;
-  border-color: var(--text-sub) !important;
-  background:   transparent !important;
-}
 
 /* Ghost clone while dragging */
 .arrange-drag-ghost {

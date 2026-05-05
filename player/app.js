@@ -852,13 +852,12 @@ async function deliverCardToPlayer(card, slug, playerSlot) {
 }
 
 /**
- * Sends a single incoming card to the group loot pool.
- * Removes it from the incoming zone and re-renders; if no incoming cards remain,
- * closes the arrange overlay since there is nothing left to place.
+ * Passes a loot card to the group pool.
+ * Used when the player leaves a card in the Incoming zone at Finalise time.
  *
- * @param {object} card - The loot card to send to group
+ * @param {object} card - Loot card from Firebase (must have .key and .cardPath)
  */
-async function sendSingleCardToGroup(card) {
+async function passCardToGroup(card) {
   const cardRef = ref(db, `${firebaseLootPath(state.campaignId)}/cards/${card.key}`);
   await set(cardRef, {
     cardPath:   card.cardPath,
@@ -869,48 +868,7 @@ async function sendSingleCardToGroup(card) {
     forceGroup: true,
     claimedBy:  null,
     resolvedAt: null,
-  }).catch(() => {});
-
-  // Remove from all tracking lists — match by key (cards may be different object
-  // references after drag-end rebuilds the zone arrays from the DOM)
-  const matchCard = c => (card.key ? c.key === card.key : c.name === card.name);
-  _arrange.incoming     = _arrange.incoming.filter(c => !matchCard(c));
-  _arrange.allCards     = _arrange.allCards.filter(c => !matchCard(c));
-  state.lootNotifyCards = state.lootNotifyCards.filter(c => !matchCard(c));
-
-  if (_arrange.incoming.length === 0) {
-    // Nothing left to place — close the overlay
-    const incomingCol = document.getElementById('arrange-incoming-col');
-    incomingCol.style.display = 'none';
-    document.getElementById('arrange-title').textContent = 'Arrange Cards';
-    document.getElementById('btn-arrange-finalise').textContent = 'Finish Arranging';
-    document.getElementById('btn-loot-send-to-group').style.display = 'none';
-    _arrange.context = 'standalone';
-    renderArrangeZones();
-  } else {
-    renderArrangeZones();
-  }
-}
-
-/**
- * Sends the player's notify cards to the group pool instead.
- */
-async function sendNotifyCardsToGroup() {
-  closeArrangeOverlay();
-  for (const card of state.lootNotifyCards) {
-    const cardRef = ref(db, `${firebaseLootPath(state.campaignId)}/cards/${card.key}`);
-    await set(cardRef, {
-      cardPath:    card.cardPath,
-      name:        card.name      || '',
-      card_type:   card.card_type || '',
-      slots:       card.slots     || 'hand',
-      assignTo:    'group',
-      forceGroup:  true,
-      claimedBy:   null,
-      resolvedAt:  null,
-    }).catch(() => {});
-  }
-  state.lootNotifyCards = [];
+  });
 }
 
 // ─── Group loot screen ─────────────────────────────────────────────────────────
@@ -1166,7 +1124,7 @@ function openArrangeOverlay({ incoming = [], context = 'standalone', preferredSl
   const incomingCol = document.getElementById('arrange-incoming-col');
   incomingCol.style.display = incoming.length > 0 ? '' : 'none';
 
-  // Blanket "Send to Group" button is replaced by per-card buttons — always hidden
+  // "Send to Group" header button unused — incoming cards auto-pass to group at finalise
   document.getElementById('btn-loot-send-to-group').style.display = 'none';
 
   // Update the title
@@ -1248,27 +1206,18 @@ function renderArrangeZone(zoneId, cards, incoming) {
       ? ''
       : escapeHtml(card.player_slot || card.slots || 'hand');
 
-    const sendToGroupBtn = (incoming && _arrange.context === 'loot-player')
-      ? `<button class="btn btn-sm arrange-send-group-btn" data-card-id="${escapeHtml(cardId)}" title="Send to group loot instead">Send to Group</button>`
-      : '';
-
     tile.innerHTML = `
       <div class="arrange-drag-handle" title="Drag to move">&#8942;&#8942;&#8942;</div>
       <div class="arrange-card-body">
         <div class="arrange-card-type">${escapeHtml(card.card_type || '')}</div>
         <div class="arrange-card-name">${escapeHtml(card.name || '')}</div>
         <div class="arrange-card-slot">${slotLabel}</div>
-        ${sendToGroupBtn}
       </div>
     `;
     tile.querySelector('.arrange-card-name').addEventListener('click', () => openCardModal(card));
     tile.querySelector('.arrange-drag-handle').addEventListener('pointerdown', (e) => {
       arrangeDragStart(e, tile, card);
     });
-    const sgBtn = tile.querySelector('.arrange-send-group-btn');
-    if (sgBtn) {
-      sgBtn.addEventListener('click', () => sendSingleCardToGroup(card));
-    }
 
     zone.appendChild(tile);
   }
@@ -1546,16 +1495,23 @@ async function finaliseArrange() {
       }
     }
 
-    // 3. Deliver incoming loot cards — slot = wherever player dragged them
-    //    Check active zone first, then hand, then fall back to preferredSlot/slots
-    const incomingSet = new Set(state.lootNotifyCards.map(c => c.key || c.name));
+    // 3. Handle incoming loot cards:
+    //    - Cards the player dragged into active/hand → deliver to their inventory
+    //    - Cards still in the incoming zone → pass to group loot automatically
     for (const card of state.lootNotifyCards) {
-      const isInActive = _arrange.active.some(c => c.key === card.key || c.name === card.name);
-      const isInHand   = _arrange.hand.some(c => c.key === card.key || c.name === card.name);
-      let slot = isInActive ? 'active'
-               : isInHand   ? 'hand'
-               : _arrange.preferredSlot || card.slots || 'hand';
-      await deliverCardToPlayer(card, state.characterSlug, slot);
+      const isInActive  = _arrange.active.some(c => c.key === card.key || c.name === card.name);
+      const isInHand    = _arrange.hand.some(c => c.key === card.key || c.name === card.name);
+      const isInDiscard = _arrange.discard.some(c => c.key === card.key || c.name === card.name);
+      const isInIncoming = _arrange.incoming.some(c => c.key === card.key || c.name === card.name);
+
+      if (isInActive || isInHand) {
+        const slot = isInActive ? 'active' : 'hand';
+        await deliverCardToPlayer(card, state.characterSlug, slot);
+      } else if (isInIncoming) {
+        // Left unplaced — pass to group
+        await passCardToGroup(card);
+      }
+      // isInDiscard: card is already in _arrange.discard which was deleted in step 1
     }
   } catch (e) {
     alert('Something went wrong while saving: ' + e.message);
@@ -1715,7 +1671,6 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.getElementById('btn-arrange-cancel').addEventListener('click', closeArrangeOverlay);
   document.getElementById('btn-arrange-finalise').addEventListener('click', finaliseArrange);
-  document.getElementById('btn-loot-send-to-group').addEventListener('click', sendNotifyCardsToGroup);
 
   // Group loot overlay buttons
   // Note: individual claim buttons are wired inside renderGroupLootCards via event delegation
