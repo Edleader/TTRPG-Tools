@@ -15,7 +15,7 @@ swaps_remaining: 0
 perk_5: 
 perk_10: 
 perk_17: 
-hp_current: 24
+hp_current: 26
 spell_slots_spent: 0
 ---
 
