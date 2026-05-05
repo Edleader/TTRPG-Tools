@@ -1143,6 +1143,30 @@ html, body {
   text-overflow: ellipsis;
 }
 
+.player-card-hp,
+.player-card-slots {
+  display:     flex;
+  align-items: baseline;
+  gap:         4px;
+  font-size:   0.82rem;
+  margin-bottom: 3px;
+}
+
+.player-hp-label {
+  font-size:      0.65rem;
+  font-weight:    700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color:          var(--text-faint);
+  min-width:      28px;
+}
+
+.player-hp-current,
+.player-slots-avail { font-weight: 700; color: var(--text); }
+.player-hp-sep      { color: var(--text-faint); font-size: 0.75rem; }
+.player-hp-max,
+.player-slots-max   { color: var(--text-sub); }
+
 .player-card-perks {
   display: flex;
   flex-direction: column;

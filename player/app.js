@@ -31,7 +31,7 @@ import {
 } from '../shared/config.js';
 
 import { initializeApp }      from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getDatabase, ref, onValue, set, get, runTransaction, remove }
+import { getDatabase, ref, onValue, set, get, update, runTransaction, remove }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
 
 // =====================================================
@@ -375,7 +375,8 @@ function onSpellBubbleTap(idx) {
     }
   }
   renderSpellSlots();
-  scheduleHpSave(); // reuse the debounced save (also saves spell_slots_spent)
+  pushHpToFirebase();
+  scheduleHpSave();
 }
 
 // ─── Perks ───────────────────────────────────────────────────────────────────
@@ -622,8 +623,12 @@ function applyLongRest() {
 }
 
 function pushHpToFirebase() {
-  set(ref(db, `${firebasePlayerPath(state.campaignId, state.characterSlug)}/hp_current`),
-    state.currentHp).catch(e => console.warn('Firebase HP write failed:', e));
+  const playerRef = ref(db, firebasePlayerPath(state.campaignId, state.characterSlug));
+  update(playerRef, {
+    hp_current:        state.currentHp,
+    spell_slots_spent: state.spentSlots,
+    spell_slots_max:   state.maxSpellSlots,
+  }).catch(e => console.warn('Firebase push failed:', e));
 }
 
 // =====================================================
@@ -1454,13 +1459,9 @@ async function finaliseArrange() {
   try {
     // 1. Delete discarded cards — re-read for fresh SHA to avoid stale SHA errors
     for (const card of _arrange.discard) {
-      if (!card._path) continue;
-      try {
-        const { sha: freshSha } = await readFile(card._path);
-        await deleteFile(card._path, freshSha, `Discard ${card.name} from ${state.characterSlug}`);
-      } catch (delErr) {
-        console.warn(`Could not delete ${card.name}:`, delErr);
-      }
+      if (!card._path) continue; // incoming loot card not yet on disk — nothing to delete
+      const { sha: freshSha } = await readFile(card._path);
+      await deleteFile(card._path, freshSha, `Discard ${card.name} from ${state.characterSlug}`);
     }
 
     // 2. Update player_slot on all owned cards that moved zones

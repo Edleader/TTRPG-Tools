@@ -65,6 +65,7 @@ const state = {
   nextHpId:         1,
   playerFiles:      [],      // Subset of files where frontmatter.type === 'player'
   playerHpLive:        {},   // { [slug]: currentHp } — live from Firebase
+  playerSlotsLive:     {},   // { [slug]: { spent, max } } — live spell slots from Firebase
   playerRestRequests:  {},   // { [slug]: { type, status, requestedAt } } — pending rests
   sessionActive:    false,   // Whether the DM has started the session
   autoApproveRests: false,   // When true, rest requests are approved instantly
@@ -1141,6 +1142,12 @@ function renderPlayerPanel(files) {
         <span class="player-hp-sep">/</span>
         <span class="player-hp-max">${escapeHtml(String(maxHp))}</span>
       </div>
+      <div class="player-card-slots" id="pslots-${escapeHtml(slug)}" style="display:none">
+        <span class="player-hp-label">Slots</span>
+        <span class="player-slots-avail" id="pslots-avail-${escapeHtml(slug)}">–</span>
+        <span class="player-hp-sep">/</span>
+        <span class="player-slots-max"  id="pslots-max-${escapeHtml(slug)}">–</span>
+      </div>
       <div class="player-card-perks">
         ${makePerkRow('Lv5',  fm.perk_5  || '')}
         ${makePerkRow('Lv10', fm.perk_10 || '')}
@@ -1237,6 +1244,18 @@ function updatePlayerHpDisplay() {
     if (el) el.textContent = String(hp);
   }
 
+  for (const [slug, slots] of Object.entries(state.playerSlotsLive)) {
+    const row = document.getElementById(`pslots-${slug}`);
+    if (!row) continue;
+    if (slots.max > 0) {
+      document.getElementById(`pslots-avail-${slug}`).textContent = String(slots.max - slots.spent);
+      document.getElementById(`pslots-max-${slug}`).textContent   = String(slots.max);
+      row.style.display = '';
+    } else {
+      row.style.display = 'none';
+    }
+  }
+
   // Show/hide approve buttons for pending rest requests
   for (const pf of state.playerFiles) {
     const slug    = pf.path.split('/players/')[1]?.split('/')[0] || '';
@@ -1290,10 +1309,17 @@ function subscribePlayerHp(campaignId) {
 
     // data.session is { [slug]: { hp_current: N, rest_request: {...}, ... } }
     state.playerHpLive       = {};
+    state.playerSlotsLive    = {};
     state.playerRestRequests = {};
     for (const [slug, playerData] of Object.entries(data.session || {})) {
       if (typeof playerData?.hp_current === 'number') {
         state.playerHpLive[slug] = playerData.hp_current;
+      }
+      if (typeof playerData?.spell_slots_max === 'number') {
+        state.playerSlotsLive[slug] = {
+          spent: playerData.spell_slots_spent || 0,
+          max:   playerData.spell_slots_max,
+        };
       }
       if (playerData?.rest_request) {
         state.playerRestRequests[slug] = playerData.rest_request;
