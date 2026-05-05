@@ -859,6 +859,16 @@ async function deliverCardToPlayer(card, slug, playerSlot) {
  */
 async function passCardToGroup(card) {
   const cardRef = ref(db, `${firebaseLootPath(state.campaignId)}/cards/${card.key}`);
+
+  // If this card was already group loot (player claimed it but left it unplaced),
+  // remove it entirely rather than re-writing it as group — which would reopen
+  // the group loot screen for everyone.
+  if (card.assignTo === 'group' || card.forceGroup) {
+    await remove(cardRef);
+    return;
+  }
+
+  // Personal loot left unplaced → promote to group
   await set(cardRef, {
     cardPath:   card.cardPath,
     name:       card.name      || '',
@@ -1520,17 +1530,9 @@ async function finaliseArrange() {
     return;
   }
 
-  closeArrangeOverlay();
+  closeArrangeOverlay(); // clears pendingLootArrange — next Firebase tick will show resolved if appropriate
   await loadAndRenderCards();
   state.lootNotifyCards = [];
-
-  // Now that arrange is done, check if all loot was resolved while we were arranging
-  if (state.groupLootSession?.cards) {
-    const allCards = Object.values(state.groupLootSession.cards);
-    if (allCards.length > 0 && allCards.every(c => c.claimedBy)) {
-      showAllLootResolved();
-    }
-  }
 }
 
 // =====================================================
