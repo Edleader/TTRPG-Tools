@@ -73,6 +73,7 @@ const state = {
   lootNotifyCards:   [],   // cards being delivered directly to this player right now
   lootNotifyTimer:   null, // auto-close countdown timer
   groupLootSession:  null, // current Firebase loot session snapshot
+  pendingLootArrange: false, // true while this player has a loot-triggered arrange open
 
   // Cached card arrays (set after loadAndRenderCards completes)
   _activeCards: [],
@@ -718,9 +719,9 @@ function onLootSessionUpdate(session) {
     }
   }
 
-  // All cards resolved — but only show if no loot arrange is in progress
-  const lootArrangeInProgress = arrangeOpen && (_arrange.context === 'loot-player' || _arrange.context === 'loot-group');
-  if (!anyPersonalPending && unclaimedGroup.length === 0 && !lootArrangeInProgress) {
+  // All cards resolved — suppress if this player still has a loot arrange to complete;
+  // finaliseArrange will trigger it instead once they finish.
+  if (!anyPersonalPending && unclaimedGroup.length === 0 && !state.pendingLootArrange) {
     const anyUnclaimed = allCards.some(c => !c.claimedBy);
     if (!anyUnclaimed && allCards.length > 0) {
       showAllLootResolved();
@@ -1068,7 +1069,12 @@ async function claimGroupCard(key, slotChoice) {
     const snap = await get(cardRef);
     const existing = snap.val();
     if (!existing) { alert('Card no longer available.'); return; }
-    if (existing.claimedBy) { alert('Sorry — someone else just claimed that card!'); return; }
+    // Ignore if this player already claimed it (Firebase echo from our own write)
+    if (existing.claimedBy && existing.claimedBy !== state.characterSlug) {
+      alert('Sorry — someone else just claimed that card!');
+      return;
+    }
+    if (existing.claimedBy === state.characterSlug) return; // already handled
 
     const result = await runTransaction(cardRef, (current) => {
       if (!current || current.claimedBy) return; // abort — already taken
@@ -1171,6 +1177,7 @@ function openArrangeOverlay({ incoming = [], context = 'standalone', preferredSl
   document.getElementById('btn-arrange-finalise').textContent =
     incoming.length > 0 ? 'Finalise' : 'Finish Arranging';
 
+  state.pendingLootArrange = (context === 'loot-player' || context === 'loot-group');
   renderArrangeZones();
   document.getElementById('arrange-overlay').style.display = '';
 }
@@ -1183,6 +1190,7 @@ function closeArrangeOverlay() {
   document.getElementById('arrange-validation').style.display = 'none';
   _arrange.active = _arrange.hand = _arrange.discard = _arrange.incoming = [];
   _arrange.context = null;
+  state.pendingLootArrange = false;
 }
 
 /**
@@ -1559,6 +1567,14 @@ async function finaliseArrange() {
   closeArrangeOverlay();
   await loadAndRenderCards();
   state.lootNotifyCards = [];
+
+  // Now that arrange is done, check if all loot was resolved while we were arranging
+  if (state.groupLootSession?.cards) {
+    const allCards = Object.values(state.groupLootSession.cards);
+    if (allCards.length > 0 && allCards.every(c => c.claimedBy)) {
+      showAllLootResolved();
+    }
+  }
 }
 
 // =====================================================
