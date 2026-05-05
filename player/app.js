@@ -870,10 +870,12 @@ async function sendSingleCardToGroup(card) {
     resolvedAt: null,
   }).catch(() => {});
 
-  // Remove from incoming zone and notify cards list
-  _arrange.incoming = _arrange.incoming.filter(c => c !== card);
-  _arrange.allCards = _arrange.allCards.filter(c => c !== card);
-  state.lootNotifyCards = state.lootNotifyCards.filter(c => c !== card);
+  // Remove from all tracking lists — match by key (cards may be different object
+  // references after drag-end rebuilds the zone arrays from the DOM)
+  const matchCard = c => (card.key ? c.key === card.key : c.name === card.name);
+  _arrange.incoming     = _arrange.incoming.filter(c => !matchCard(c));
+  _arrange.allCards     = _arrange.allCards.filter(c => !matchCard(c));
+  state.lootNotifyCards = state.lootNotifyCards.filter(c => !matchCard(c));
 
   if (_arrange.incoming.length === 0) {
     // Nothing left to place — close the overlay
@@ -1235,7 +1237,7 @@ function renderArrangeZone(zoneId, cards, incoming) {
 
     // All cards — including incoming loot — are draggable so the player can place them
     const slotLabel = incoming
-      ? `Incoming · needs ${escapeHtml(card.slots || 'hand')}`
+      ? ''
       : escapeHtml(card.player_slot || card.slots || 'hand');
 
     const sendToGroupBtn = (incoming && _arrange.context === 'loot-player')
@@ -1392,16 +1394,14 @@ function arrangeDragEnd(e) {
     _arrange[zoneName] = ids.map(resolveCardId).filter(Boolean);
   }
 
-  // Validate: only slots:active cards can be in the active zone
+  // Silently enforce: only slots:active cards can be in the active zone
   const invalidInActive = _arrange.active.filter(c => (c.slots || '').toLowerCase() !== 'active');
   if (invalidInActive.length > 0) {
     for (const c of invalidInActive) {
       _arrange.active = _arrange.active.filter(x => x !== c);
       _arrange.hand.push(c);
     }
-    // Re-render all zones since we need to move cards back
     renderArrangeZones();
-    showArrangeValidation(`Only active-type cards can go in the Active section. "${invalidInActive.map(c => c.name).join('", "')}" moved to Hand.`);
     return;
   }
 
