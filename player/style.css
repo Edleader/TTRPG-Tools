@@ -975,7 +975,7 @@ html, body {
   border:        1px solid var(--border);
   border-radius: 10px;
   width:         min(960px, 98vw);
-  max-height:    94vh;
+  height:        min(600px, 94vh);
   display:       flex;
   flex-direction: column;
   overflow:      hidden;
