@@ -33,6 +33,7 @@ import {
 } from '../shared/config.js';
 
 import { escapeHtml, calcMaxSpellSlots, calcMaxHp } from '../shared/utils.js';
+import { startDrag, findZoneAt, findTileAt } from '../shared/dragReorder.js';
 
 import { initializeApp }      from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
 import { getDatabase, ref, onValue, set, get, update, runTransaction, remove, push }
@@ -73,10 +74,102 @@ const state = {
   // Debounce timer for HP writes
   _hpTimer: null,
 
-  // Cached card arrays (set after loadAndRenderCards completes)
+  // Single in-memory inventory of card objects this player owns.
+  // Each card has: name, card_type, slots, _path, _sha, player_slot, etc.
+  // Mutated locally on operations (delete, add, slot-change) so every UI
+  // surface reads the same up-to-date list without re-fetching from GitHub.
+  inventory: [],
+
+  // Derived from inventory; rebuilt by refreshDerivedCardLists() after any
+  // change. Kept around as named caches because lots of UI reads them
+  // directly. Treat them as read-only.
   _activeCards: [],
   _handCards:   [],
 };
+
+/**
+ * Returns 'active' if a card lives in the active zone, otherwise 'hand'.
+ * Falls back to the card's native slots field when player_slot isn't set
+ * yet (i.e. just-arrived loot or freshly-imported cards).
+ */
+function cardSlot(card) {
+  return ((card.player_slot || card.slots || 'hand').toLowerCase() === 'active')
+    ? 'active' : 'hand';
+}
+
+/**
+ * Rebuilds state._activeCards and state._handCards from state.inventory.
+ * Call this after any mutation to state.inventory.
+ */
+function refreshDerivedCardLists() {
+  state._activeCards = state.inventory.filter(c => cardSlot(c) === 'active');
+  state._handCards   = state.inventory.filter(c => cardSlot(c) === 'hand');
+}
+
+/**
+ * Re-renders the main player sheet card grids and headers from the current
+ * derived lists. Call after refreshDerivedCardLists() any time the main
+ * sheet is visible.
+ */
+function renderInventoryUI() {
+  const fm        = state.fm;
+  const maxActive = fm.active_slots || 4;
+  const maxHand   = fm.hand_slots   || 4;
+
+  document.getElementById('active-section-header').textContent =
+    `Active Slots (${state._activeCards.length} / ${maxActive})`;
+  document.getElementById('hand-section-header').textContent =
+    `Hand (${state._handCards.length} / ${maxHand})`;
+
+  // Armour = sum of DR values from active armour cards
+  const totalArmour = state._activeCards
+    .filter(c => (c.card_type || '').toLowerCase() === 'armour')
+    .reduce((sum, c) => sum + (parseInt(c.dr) || 0), 0);
+  document.getElementById('stat-armour').textContent = totalArmour;
+
+  const activeEl = document.getElementById('active-cards-grid');
+  const handEl   = document.getElementById('hand-cards-grid');
+
+  if (state.inventory.length === 0) {
+    activeEl.innerHTML = '<p class="cards-empty">No cards in inventory.</p>';
+    handEl.innerHTML   = '';
+    return;
+  }
+  renderCardGrid(activeEl, state._activeCards);
+  renderCardGrid(handEl,   state._handCards);
+}
+
+/**
+ * Removes a card from the in-memory inventory by repo path. Returns the
+ * removed card object (or undefined). Caller is responsible for triggering
+ * the GitHub delete and any UI re-render.
+ */
+function inventoryRemoveByPath(path) {
+  const idx = state.inventory.findIndex(c => c._path === path);
+  if (idx === -1) return undefined;
+  const [removed] = state.inventory.splice(idx, 1);
+  refreshDerivedCardLists();
+  return removed;
+}
+
+/**
+ * Adds a card object to the in-memory inventory and refreshes derived
+ * lists. Caller is responsible for the GitHub write that produced it.
+ */
+function inventoryAddCard(card) {
+  state.inventory.push(card);
+  refreshDerivedCardLists();
+}
+
+/**
+ * Updates a card's player_slot in memory and refreshes derived lists.
+ */
+function inventorySetSlot(path, newSlot) {
+  const card = state.inventory.find(c => c._path === path);
+  if (!card) return;
+  card.player_slot = newSlot;
+  refreshDerivedCardLists();
+}
 
 // =====================================================
 // SCREEN HELPERS
@@ -259,6 +352,11 @@ function loadCharacter() {
  * list (carried over from a session that ended before the player handled it),
  * push those entries back into Firebase as fresh pending entries and clear
  * the frontmatter copy.
+ *
+ * Idempotent: reads Firebase first and dedups against existing pending
+ * entries by cardPath+sentAt. This stops duplicate push-loops if the
+ * frontmatter contains entries that the previous flush copy didn't fully
+ * clear, or if a fresh personal-loot drop arrived during the same session.
  */
 async function rehydratePersonalPendingFromFrontmatter() {
   const fm = state.fm;
@@ -266,10 +364,19 @@ async function rehydratePersonalPendingFromFrontmatter() {
   if (saved.length === 0) return;
 
   try {
-    // Push each saved entry back into Firebase
     const pendingRoot = ref(db,
       `${firebasePlayerPath(state.campaignId, state.characterSlug)}/pending_personal_loot`);
+
+    // Read existing Firebase pending so we don't push duplicates
+    const existingSnap = await get(pendingRoot);
+    const existing     = existingSnap.val() || {};
+    const seen = new Set(
+      Object.values(existing).map(c => `${c.cardPath}|${c.sentAt}`)
+    );
+
     for (const card of saved) {
+      const sig = `${card.cardPath || ''}|${card.sentAt || ''}`;
+      if (seen.has(sig)) continue; // already in Firebase, skip
       const newRef = push(pendingRoot);
       await set(newRef, {
         cardPath:   card.cardPath  || '',
@@ -281,7 +388,9 @@ async function rehydratePersonalPendingFromFrontmatter() {
       });
     }
 
-    // Clear the frontmatter copy
+    // Clear the frontmatter copy regardless of dedup outcome — Firebase is
+    // authoritative once we've reconciled, and leaving the frontmatter field
+    // around would re-trigger the push next time.
     const { content, sha } = await readFile(state.characterPath);
     const fresh = parseFrontmatter(content);
     delete fresh.pending_personal_loot;
@@ -425,34 +534,36 @@ function renderPerks() {
 
 // ─── Cards ───────────────────────────────────────────────────────────────────
 
+/**
+ * Reads the full inventory from GitHub and rebuilds the in-memory
+ * state.inventory array. The single read-from-disk authoritative path —
+ * normal operations mutate state.inventory in memory and don't re-call
+ * this. The intentional re-read paths are: initial character load,
+ * post-login rehydrate, and the rare "force refresh" recovery.
+ */
 async function loadAndRenderCards() {
   const activeEl = document.getElementById('active-cards-grid');
   const handEl   = document.getElementById('hand-cards-grid');
   activeEl.innerHTML = '<span class="cards-loading">Loading cards…</span>';
   handEl.innerHTML   = '<span class="cards-loading">Loading cards…</span>';
 
-  // Check for player inventory folder
   const inventoryDir = `${state.campaignPath}/players/${state.characterSlug}/cards`;
   let inventoryFiles = [];
   try {
     const entries = await listDirectory(inventoryDir);
     inventoryFiles = entries.filter(e => e.type === 'file' && e.name.endsWith('.md'));
   } catch (_) {
-    // No inventory yet — empty cards
+    // No inventory yet — empty
   }
 
   if (inventoryFiles.length === 0) {
-    const maxActive = state.fm.active_slots || 4;
-    const maxHand   = state.fm.hand_slots   || 4;
-    document.getElementById('active-section-header').textContent = `Active Slots (0 / ${maxActive})`;
-    document.getElementById('hand-section-header').textContent   = `Hand (0 / ${maxHand})`;
-    document.getElementById('stat-armour').textContent = '0';
-    activeEl.innerHTML = '<p class="cards-empty">No cards in inventory.</p>';
-    handEl.innerHTML   = '';
+    state.inventory = [];
+    refreshDerivedCardLists();
+    renderInventoryUI();
     return;
   }
 
-  // Load all card files in parallel, preserving path and sha for later writes/deletes
+  // Load all card files in parallel, preserving path and sha
   const cards = await Promise.all(
     inventoryFiles.map(async entry => {
       try {
@@ -465,37 +576,9 @@ async function loadAndRenderCards() {
     })
   );
 
-  const validCards = cards.filter(Boolean);
-
-  // player_slot is where THIS player has placed the card (hand or active).
-  // Falls back to the card's native 'slots' field if player_slot not yet set.
-  const activeCards = validCards.filter(c =>
-    (c.player_slot || c.slots || '').toLowerCase() === 'active'
-  );
-  const handCards = validCards.filter(c =>
-    (c.player_slot || c.slots || '').toLowerCase() === 'hand'
-  );
-
-  const maxActive = state.fm.active_slots || 4;
-  const maxHand   = state.fm.hand_slots   || 4;
-
-  document.getElementById('active-section-header').textContent =
-    `Active Slots (${activeCards.length} / ${maxActive})`;
-  document.getElementById('hand-section-header').textContent =
-    `Hand (${handCards.length} / ${maxHand})`;
-
-  // Armour = sum of DR values from active armour cards
-  const totalArmour = activeCards
-    .filter(c => (c.card_type || '').toLowerCase() === 'armour')
-    .reduce((sum, c) => sum + (parseInt(c.dr) || 0), 0);
-  document.getElementById('stat-armour').textContent = totalArmour;
-
-  // Cache for loot/discard functions
-  state._activeCards = activeCards;
-  state._handCards   = handCards;
-
-  renderCardGrid(activeEl, activeCards);
-  renderCardGrid(handEl,   handCards);
+  state.inventory = cards.filter(Boolean);
+  refreshDerivedCardLists();
+  renderInventoryUI();
 }
 
 function renderCardGrid(container, cards) {
@@ -651,46 +734,64 @@ function subscribeFirebase() {
   if (state._fbUnsub) state._fbUnsub();
 
   const campaignRef = ref(db, firebaseCampaignPath(state.campaignId));
-  const unsubscribe = onValue(campaignRef, (snapshot) => {
+
+  // Fire a one-shot get() immediately so the UI initialises from the latest
+  // server state without waiting for the onValue subscription's first event
+  // (which can lag on cold sockets or when the campaign object is large).
+  // The same handler runs for both this initial read and ongoing updates.
+  const handleSnapshot = (snapshot) => {
     const data = snapshot.val() || {};
+    applyCampaignSnapshot(data);
+  };
+  get(campaignRef).then(handleSnapshot).catch(e =>
+    console.warn('Initial campaign get() failed (will rely on onValue):', e));
 
-    // Session active?
-    state.sessionActive = data.session_active === true;
-    document.getElementById('session-banner').style.display =
-      state.sessionActive ? 'none' : '';
-    document.getElementById('btn-arrange-cards').disabled = !state.sessionActive;
-    document.getElementById('btn-trade-cards').disabled   = !state.sessionActive;
-
-    // Live HP sync — update display if another tab/device changed HP
-    const playerData   = (data.session || {})[state.characterSlug] || {};
-    const remoteHp     = playerData.hp_current;
-    if (typeof remoteHp === 'number' && remoteHp !== state.currentHp) {
-      state.currentHp = Math.max(0, Math.min(state.maxHp, remoteHp));
-      renderHp();
-    }
-
-    // Rest approval?
-    const restReq    = playerData.rest_request;
-    if (restReq && restReq.status === 'approved') {
-      set(ref(db,
-        `${firebasePlayerPath(state.campaignId, state.characterSlug)}/rest_request`
-      ), null);
-      hideRestOverlay();
-      if (restReq.type === 'short') applyShortRest();
-      else if (restReq.type === 'long') applyLongRest();
-    }
-
-    // Pending personal loot for this player (from `pending_personal_loot/{key}`)
-    onPersonalPendingUpdate(playerData.pending_personal_loot || null);
-
-    // Group loot session (shared across all players)
-    onGroupLootUpdate(data.loot || null);
-  });
+  const unsubscribe = onValue(campaignRef, handleSnapshot);
 
   state._fbUnsub = unsubscribe;
 
   // Subscribe to trade pool separately
   subscribeTradePool();
+}
+
+/**
+ * Applies a fresh campaign snapshot to UI state. Used by both the initial
+ * one-shot get() and the live onValue stream — keeping the logic in one
+ * place avoids drift between the two paths.
+ */
+function applyCampaignSnapshot(data) {
+  // Session active?
+  state.sessionActive = data.session_active === true;
+  document.getElementById('session-banner').style.display =
+    state.sessionActive ? 'none' : '';
+  document.getElementById('btn-arrange-cards').disabled = !state.sessionActive;
+  document.getElementById('btn-trade-cards').disabled   = !state.sessionActive;
+
+  const playerData = (data.session || {})[state.characterSlug] || {};
+
+  // Live HP sync — update display if another tab/device changed HP
+  const remoteHp = playerData.hp_current;
+  if (typeof remoteHp === 'number' && remoteHp !== state.currentHp) {
+    state.currentHp = Math.max(0, Math.min(state.maxHp, remoteHp));
+    renderHp();
+  }
+
+  // Rest approval?
+  const restReq = playerData.rest_request;
+  if (restReq && restReq.status === 'approved') {
+    set(ref(db,
+      `${firebasePlayerPath(state.campaignId, state.characterSlug)}/rest_request`
+    ), null);
+    hideRestOverlay();
+    if (restReq.type === 'short') applyShortRest();
+    else if (restReq.type === 'long') applyLongRest();
+  }
+
+  // Pending personal loot for this player
+  onPersonalPendingUpdate(playerData.pending_personal_loot || null);
+
+  // Group loot session (shared across all players)
+  onGroupLootUpdate(data.loot || null);
 }
 
 // =====================================================
@@ -850,7 +951,7 @@ async function closeTradeOverlay() {
   closeBtn.textContent = 'Close';
   _trade.yoursActive = [];
   _trade.yoursHand   = [];
-  await loadAndRenderCards();
+  // No GitHub re-read needed — setCardSlotInInventory updated memory inline.
 }
 
 /**
@@ -862,26 +963,14 @@ async function closeTradeOverlay() {
  * actually changed zone.
  */
 async function persistTradeReorderings() {
-  const originalActive = new Set((state._activeCards || []).map(c => c._path));
-  const originalHand   = new Set((state._handCards   || []).map(c => c._path));
-
-  // Cards that moved from Hand → Active
   for (const card of _trade.yoursActive) {
-    if (card._path && originalHand.has(card._path)) {
-      const { content, sha } = await readFile(card._path);
-      const fm = parseFrontmatter(content);
-      fm.player_slot = 'active';
-      await writeFile(card._path, serialiseFrontmatter(fm), `Move ${card.name} to active slot`, sha);
+    if (card._path && cardSlot(card) !== 'active') {
+      await setCardSlotInInventory(card, 'active');
     }
   }
-
-  // Cards that moved from Active → Hand
   for (const card of _trade.yoursHand) {
-    if (card._path && originalActive.has(card._path)) {
-      const { content, sha } = await readFile(card._path);
-      const fm = parseFrontmatter(content);
-      fm.player_slot = 'hand';
-      await writeFile(card._path, serialiseFrontmatter(fm), `Move ${card.name} to hand`, sha);
+    if (card._path && cardSlot(card) !== 'hand') {
+      await setCardSlotInInventory(card, 'hand');
     }
   }
 }
@@ -1057,78 +1146,42 @@ function validateTradeYours() {
 
 // ─── Trade drag-and-drop ──────────────────────────────────────────────────────
 
-const _tradeDrag = {
-  active:   false,
-  sourceEl: null,
-  ghost:    null,
-  card:     null,
-  fromZone: null,  // 'trade-active' | 'trade-hand'
-  offsetX:  0,
-  offsetY:  0,
-};
-
+/**
+ * Pointerdown entry for any draggable trade tile. Defers the boilerplate
+ * (ghost, listeners) to the shared drag helper.
+ */
 function tradeDragStart(e, tile, card) {
-  if (e.button !== undefined && e.button !== 0) return;
-  e.preventDefault();
-  e.stopPropagation();
-
-  const rect = tile.getBoundingClientRect();
-  _tradeDrag.active   = true;
-  _tradeDrag.sourceEl = tile;
-  _tradeDrag.card     = card;
-  _tradeDrag.fromZone = tile.closest('[data-zone]')?.dataset.zone || null;
-  _tradeDrag.offsetX  = e.clientX - rect.left;
-  _tradeDrag.offsetY  = e.clientY - rect.top;
-
-  const ghost = tile.cloneNode(true);
-  ghost.className   = 'arrange-card-tile arrange-drag-ghost';
-  ghost.style.width = `${rect.width}px`;
-  ghost.style.left  = `${rect.left}px`;
-  ghost.style.top   = `${rect.top}px`;
-  document.body.appendChild(ghost);
-  _tradeDrag.ghost = ghost;
-  tile.classList.add('arrange-drag-source');
-
-  document.addEventListener('pointermove', tradeDragMove, { capture: true });
-  document.addEventListener('pointerup',   tradeDragEnd,  { capture: true });
-}
-
-function tradeDragMove(e) {
-  if (!_tradeDrag.active) return;
-  _tradeDrag.ghost.style.left = `${e.clientX - _tradeDrag.offsetX}px`;
-  _tradeDrag.ghost.style.top  = `${e.clientY - _tradeDrag.offsetY}px`;
+  startDrag({
+    event:       e,
+    tile,
+    card,
+    ghostClass:  'arrange-drag-ghost',
+    sourceClass: 'arrange-drag-source',
+    onDrop:      handleTradeDrop,
+  });
 }
 
 /**
- * Resolves the drag-end target. Three valid outcomes:
+ * Drop handler for the trade overlay. Three valid outcomes:
  *   1. Dropped over Your Offer → publish the card to the trade pool.
  *   2. Dropped over the OTHER yours-zone (Active↔Hand) → reorder locally,
  *      validating against the native-slot rule.
  *   3. Anywhere else → snap back (no-op).
  */
-async function tradeDragEnd(e) {
-  if (!_tradeDrag.active) return;
-  _tradeDrag.active = false;
-  _tradeDrag.ghost.remove();
-  _tradeDrag.ghost = null;
-  _tradeDrag.sourceEl.classList.remove('arrange-drag-source');
-  document.removeEventListener('pointermove', tradeDragMove, { capture: true });
-  document.removeEventListener('pointerup',   tradeDragEnd,  { capture: true });
-
-  const card     = _tradeDrag.card;
-  const fromZone = _tradeDrag.fromZone;
-  const droppedOnZone = findTradeZoneAt(e.clientX, e.clientY);
+async function handleTradeDrop({ event, card, fromZone }) {
+  const zoneEls = ['trade-active-zone', 'trade-hand-zone', 'trade-offer-zone']
+    .map(id => document.getElementById(id))
+    .filter(Boolean);
+  const droppedOnZone = findZoneAt(event, zoneEls);
 
   if (droppedOnZone === 'offer' && fromZone !== 'offer') {
-    // Publish — Firebase echo will refresh Your Cards via the subscriber
     await publishTradeOffer(card);
     return;
   }
 
   if (droppedOnZone === 'trade-active' && fromZone === 'trade-hand') {
-    // Hand → Active: only valid if card's native slot allows Active
     if ((card.slots || 'hand').toLowerCase() === 'hand') {
-      // Bounce back silently — re-render shows the card in Hand still
+      // Hand-only card: silent bounce
       renderTradeYoursZones();
       validateTradeYours();
       return;
@@ -1142,29 +1195,8 @@ async function tradeDragEnd(e) {
     return;
   }
 
-  // Drop on the originating zone or anywhere else — re-render to snap back
   renderTradeYoursZones();
   validateTradeYours();
-}
-
-/**
- * Returns 'trade-active' | 'trade-hand' | 'offer' | null depending on which
- * zone the given client coordinates fall inside.
- */
-function findTradeZoneAt(clientX, clientY) {
-  const zones = [
-    { id: 'trade-active-zone', name: 'trade-active' },
-    { id: 'trade-hand-zone',   name: 'trade-hand'   },
-    { id: 'trade-offer-zone',  name: 'offer'        },
-  ];
-  for (const z of zones) {
-    const r = document.getElementById(z.id).getBoundingClientRect();
-    if (clientX >= r.left && clientX <= r.right &&
-        clientY >= r.top  && clientY <= r.bottom) {
-      return z.name;
-    }
-  }
-  return null;
 }
 
 /**
@@ -1270,11 +1302,9 @@ async function claimTradeCard(card) {
                      : curHand < maxHand ? 'hand' : 'active';
     try {
       await deliverTradeCardToPlayer(incomingCard, state.characterSlug, actualSlot);
-      await loadAndRenderCards();
-      // Refresh the trade overlay if it's open so the just-claimed card
-      // appears in Your Cards immediately. (The Firebase subscriber may also
-      // fire from the trade-pool removal, but explicit is safer than relying
-      // on event ordering.)
+      // copyCardToInventory inside deliverTradeCardToPlayer already mutated
+      // state.inventory in memory. Refresh the trade overlay's local view if
+      // it's open so the just-claimed card appears in Your Cards immediately.
       if (isTradeOverlayOpen()) {
         refreshTradeYoursFromInventory();
         renderTradeYoursZones();
@@ -1320,16 +1350,18 @@ async function releaseTradeClaim(tradeKey) {
 // =====================================================
 
 /**
- * Copies a card .md file from `srcPath` into a player's cards/ folder, setting
- * `player_slot` in the frontmatter. Picks a non-colliding filename if a card
- * with the same name already exists in the player's inventory.
+ * Copies a card .md file from `srcPath` into a player's cards/ folder,
+ * setting player_slot in the frontmatter. Picks a non-colliding filename
+ * if a card with the same name already exists.
  *
- * Pure GitHub operation — does NOT write to Firebase. Use the deliver* wrappers
- * below to perform the relevant Firebase bookkeeping for loot vs trade.
+ * If the destination is THIS character (i.e. slug === state.characterSlug),
+ * also adds the new card to in-memory state.inventory and re-renders the
+ * sheet — so UIs that read from state.inventory immediately see the new
+ * card without waiting for a GitHub re-read.
  *
  * @param {string} srcPath    - Repo path of the source card file
  * @param {string} slug       - Destination player's character slug
- * @param {string} playerSlot - 'hand' or 'active' — written into frontmatter
+ * @param {string} playerSlot - 'hand' or 'active'
  * @param {string} cardName   - Used in the commit message
  * @returns {Promise<string>} The destination path the file was written to
  */
@@ -1352,7 +1384,56 @@ async function copyCardToInventory(srcPath, slug, playerSlot, cardName) {
   } catch (_) { /* cardsDir doesn't exist yet — first card */ }
 
   await copyFile(srcPath, destPath, `Give ${cardName} to ${slug}`, { player_slot: playerSlot });
+
+  // If this is THIS character, sync the in-memory inventory too.
+  if (slug === state.characterSlug) {
+    try {
+      const { content, sha } = await readFile(destPath);
+      const fm = parseFrontmatter(content);
+      fm._path = destPath;
+      fm._sha  = sha;
+      inventoryAddCard(fm);
+      renderInventoryUI();
+    } catch (e) {
+      // Memory will catch up on next loadAndRenderCards. Not fatal.
+      console.warn('Could not sync new card into memory inventory:', e);
+    }
+  }
+
   return destPath;
+}
+
+/**
+ * Deletes a card from this player's inventory on GitHub AND removes it from
+ * in-memory state.inventory. Re-fetches the SHA fresh in case the cached one
+ * is stale.
+ *
+ * @param {object} card - Inventory card object (must have _path)
+ * @param {string} commitMsg
+ */
+async function removeCardFromInventory(card, commitMsg) {
+  if (!card._path) return;
+  const { sha: freshSha } = await readFile(card._path);
+  await deleteFile(card._path, freshSha, commitMsg);
+  inventoryRemoveByPath(card._path);
+  renderInventoryUI();
+}
+
+/**
+ * Updates a card's player_slot frontmatter on GitHub AND in memory.
+ *
+ * @param {object} card    - Inventory card (must have _path)
+ * @param {string} newSlot - 'hand' or 'active'
+ */
+async function setCardSlotInInventory(card, newSlot) {
+  if (!card._path || cardSlot(card) === newSlot) return;
+  const { content, sha } = await readFile(card._path);
+  const fm = parseFrontmatter(content);
+  fm.player_slot = newSlot;
+  await writeFile(card._path, serialiseFrontmatter(fm),
+    `Move ${card.name} to ${newSlot} slot`, sha);
+  inventorySetSlot(card._path, newSlot);
+  renderInventoryUI();
 }
 
 /**
@@ -1369,13 +1450,32 @@ async function deliverTradeCardToPlayer(card, slug, playerSlot) {
   // 1. Copy from offerer's inventory into ours
   await copyCardToInventory(card.cardPath, slug, playerSlot, card.name);
 
-  // 2. Delete the offerer's original. If this fails the card is duplicated —
-  //    log it but don't abort, because the claimer already has their copy.
-  try {
-    const { sha } = await readFile(card.cardPath);
-    await deleteFile(card.cardPath, sha, `Trade: ${card.name} to ${slug}`);
-  } catch (e) {
-    console.warn('Could not delete traded card from offerer inventory:', e);
+  // 2. Delete the offerer's original. The GitHub Contents API can serve a
+  //    stale SHA from cache for a few seconds after a recent write, so we
+  //    retry once on the assumption that the first attempt hit a stale SHA.
+  //    If both attempts fail, surface a clear alert so the GM can manually
+  //    clean up the duplicate rather than discover it days later.
+  let deleted = false;
+  let lastErr = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const { sha } = await readFile(card.cardPath);
+      await deleteFile(card.cardPath, sha, `Trade: ${card.name} to ${slug}`);
+      deleted = true;
+      break;
+    } catch (e) {
+      lastErr = e;
+      // Brief pause before retry so the cache has a moment to invalidate
+      await new Promise(r => setTimeout(r, 400));
+    }
+  }
+  if (!deleted) {
+    console.error('Trade-claim: failed to delete offerer file', card.cardPath, lastErr);
+    alert(
+      `The card "${card.name}" was added to your inventory, but the original ` +
+      `couldn't be removed from the other player. Please tell the GM so they ` +
+      `can manually delete the duplicate at:\n\n${card.cardPath}`
+    );
   }
 
   // 3. Remove the trade pool entry now that delivery is complete
@@ -1390,26 +1490,50 @@ async function deliverTradeCardToPlayer(card, slug, playerSlot) {
 /**
  * Pending personal-loot state (live mirror of Firebase plus UI flags).
  *
- * cards is a map of pending entries by Firebase key:
- *   { [key]: { cardPath, name, card_type, slots, generation, sentAt } }
- *
- * notifiedKeys tracks which entries the player has already seen (i.e. had the
- * notification overlay shown for). Once notified, an entry stays "live" but
- * doesn't re-trigger the overlay until handled or a new entry arrives.
- *
- * lastSeen is used to display only the freshest batch in the notification
- * overlay so a player who hasn't dealt with old loot still sees new arrivals
- * cleanly.
+ *   cards          map of pending entries by Firebase key
+ *   notifiedKeys   set of keys we've already shown a notification for; persists
+ *                  across page refreshes via localStorage so a player who
+ *                  acknowledged but didn't place a card doesn't get re-pinged
+ *                  every time they reload.
+ *   _pendingNewKeys / _notifyTimer
+ *                  used by the debounce — when the DM ships multiple cards
+ *                  in quick succession, we batch them into one overlay rather
+ *                  than firing one overlay per Firebase echo.
  */
+const PERSONAL_LOOT_DEBOUNCE_MS  = 600;
+const PERSONAL_LOOT_STORAGE_KEY  = 'ttrpg.personalLoot.notified';
+
 const _personalLoot = {
-  cards:        {},      // { [key]: card }
-  notifiedKeys: new Set(),
+  cards:           {},
+  notifiedKeys:    loadNotifiedKeys(),
+  _pendingNewKeys: [],
+  _notifyTimer:    null,
 };
+
+function loadNotifiedKeys() {
+  try {
+    const raw = localStorage.getItem(PERSONAL_LOOT_STORAGE_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? new Set(arr) : new Set();
+  } catch (_) {
+    return new Set();
+  }
+}
+
+function persistNotifiedKeys() {
+  try {
+    localStorage.setItem(PERSONAL_LOOT_STORAGE_KEY,
+      JSON.stringify(Array.from(_personalLoot.notifiedKeys)));
+  } catch (_) { /* ignore quota / private mode */ }
+}
 
 /**
  * Subscriber callback for `session/{slug}/pending_personal_loot`.
- * Updates internal state and triggers the notification overlay when new
- * (un-notified) entries are present.
+ *
+ * - Mirrors Firebase state into _personalLoot.cards
+ * - Updates the Arrange button badge
+ * - Debounces new-key notifications so a multi-card drop produces ONE overlay
  *
  * @param {object|null} pending - The pending_personal_loot Firebase node
  */
@@ -1417,24 +1541,52 @@ function onPersonalPendingUpdate(pending) {
   _personalLoot.cards = pending || {};
 
   const allKeys = Object.keys(_personalLoot.cards);
-  const newKeys = allKeys.filter(k => !_personalLoot.notifiedKeys.has(k));
-
-  // Update Arrange button badge based on whether anything is pending at all.
-  // (Notified-but-unhandled cards still merit the badge until placed.)
   updateArrangeBadge(allKeys.length > 0);
 
-  // Newly arrived cards → show the notification overlay
-  if (newKeys.length > 0) {
-    const newCards = newKeys.map(k => ({ key: k, ..._personalLoot.cards[k] }));
-    showPersonalLootNotification(newCards);
-    for (const k of newKeys) _personalLoot.notifiedKeys.add(k);
-  }
-
-  // No pending entries left → make sure the overlay is closed and badge cleared
+  // Hide the overlay if everything has been handled
   if (allKeys.length === 0) {
     const overlay = document.getElementById('personal-loot-overlay');
     if (overlay.style.display !== 'none') overlay.style.display = 'none';
+    return;
   }
+
+  // Identify entries we haven't notified the player about yet
+  const newKeys = allKeys.filter(k => !_personalLoot.notifiedKeys.has(k));
+  if (newKeys.length === 0) return;
+
+  // Batch new keys via debounce — multiple Firebase writes from a single DM
+  // "Send N items" action arrive as separate events; we want one overlay.
+  for (const k of newKeys) {
+    if (!_personalLoot._pendingNewKeys.includes(k)) {
+      _personalLoot._pendingNewKeys.push(k);
+    }
+  }
+  if (_personalLoot._notifyTimer) clearTimeout(_personalLoot._notifyTimer);
+  _personalLoot._notifyTimer = setTimeout(flushPersonalLootNotifications,
+    PERSONAL_LOOT_DEBOUNCE_MS);
+}
+
+/**
+ * Fires the actual notification overlay for whatever entries debounced in
+ * during the wait window. Clears the debounce buffer.
+ */
+function flushPersonalLootNotifications() {
+  _personalLoot._notifyTimer = null;
+  const keys = _personalLoot._pendingNewKeys;
+  _personalLoot._pendingNewKeys = [];
+  if (keys.length === 0) return;
+
+  // Translate keys → card objects, dropping any that vanished mid-debounce
+  const cards = keys
+    .map(k => _personalLoot.cards[k] ? { key: k, ..._personalLoot.cards[k] } : null)
+    .filter(Boolean);
+  if (cards.length === 0) return;
+
+  showPersonalLootNotification(cards);
+
+  // Mark notified + persist so a refresh doesn't re-trigger
+  for (const k of keys) _personalLoot.notifiedKeys.add(k);
+  persistNotifiedKeys();
 }
 
 /**
@@ -1478,18 +1630,31 @@ function hasSpaceForCards(cards) {
 }
 
 /**
- * Shows the Personal Loot notification overlay. Variant depends on whether
- * the recipient currently has space for everything in `cards`.
+ * Shows the Personal Loot notification overlay.
+ *
+ * Single-card form shows the card tile inline (click name for full modal).
+ * Multi-card form shows a "you received N items" message with a View button
+ * that opens the Arrange overlay so the player sees all the cards in
+ * Incoming, rather than cramming them all into the notification.
  *
  * @param {Array} cards - Pending personal loot entries (each has .key)
  */
 function showPersonalLootNotification(cards) {
   const overlay = document.getElementById('personal-loot-overlay');
+  const subEl   = document.getElementById('personal-loot-sub');
   const cardsEl = document.getElementById('personal-loot-cards');
   const noSpace = document.getElementById('personal-loot-no-space');
+  const okBtn   = document.getElementById('btn-personal-loot-ok');
+
+  const fits = hasSpaceForCards(cards);
+  noSpace.style.display = fits ? 'none' : '';
 
   cardsEl.innerHTML = '';
-  for (const card of cards) {
+
+  if (cards.length === 1) {
+    // Single-card form — show full tile inline
+    subEl.textContent = 'The GM has given this to you specifically — other players can\'t see it.';
+    const card = cards[0];
     const tile = document.createElement('div');
     tile.className = 'arrange-card-tile card-type-' + (card.card_type || 'item').toLowerCase();
     tile.innerHTML = `
@@ -1501,13 +1666,19 @@ function showPersonalLootNotification(cards) {
     `;
     tile.querySelector('.arrange-card-name').addEventListener('click', () => openCardModal(card));
     cardsEl.appendChild(tile);
+    okBtn.textContent = 'OK';
+  } else {
+    // Multi-card form — summary message + Arrange-launch button
+    subEl.textContent = `The GM has given you ${cards.length} cards specifically — other players can't see them.`;
+    const summary = document.createElement('div');
+    summary.className   = 'personal-loot-multi-summary';
+    summary.textContent = cards.map(c => c.name || '?').join(', ');
+    cardsEl.appendChild(summary);
+    okBtn.textContent = fits ? 'OK' : 'Open Arrange';
   }
 
-  const fits = hasSpaceForCards(cards);
-  noSpace.style.display = fits ? 'none' : '';
-
-  // Wire OK button — handler delivers if there's space, otherwise just closes.
-  const okBtn = document.getElementById('btn-personal-loot-ok');
+  // Wire OK button: deliver if it fits and is single-card; otherwise close
+  // (and open Arrange if multi-card so the player can sort).
   okBtn.onclick = () => personalLootAccept(cards, fits);
 
   overlay.style.display = '';
@@ -1525,35 +1696,30 @@ function showPersonalLootNotification(cards) {
 async function personalLootAccept(cards, fits) {
   const okBtn = document.getElementById('btn-personal-loot-ok');
   okBtn.disabled    = true;
-  okBtn.textContent = fits ? 'Delivering…' : 'OK';
 
-  if (fits) {
+  // Single card with space → silent deliver. Multi-card OR no-space → close
+  // the notification and route the player to the Arrange overlay so they
+  // can place the cards themselves with full visibility.
+  const shouldDeliverSilently = fits && cards.length === 1;
+
+  if (shouldDeliverSilently) {
+    okBtn.textContent = 'Delivering…';
     try {
-      // Place each card in its native slot, spilling active→hand if needed
+      const card = cards[0];
+      const native = (card.slots || 'hand').toLowerCase() === 'active' ? 'active' : 'hand';
       const fm        = state.fm;
       const maxActive = fm.active_slots || 4;
       const maxHand   = fm.hand_slots   || 4;
       const curActive = (state._activeCards || []).length;
       const curHand   = (state._handCards   || []).length;
-      let placedHand = 0, placedActive = 0;
+      const slot = native === 'hand'
+        ? (curHand   < maxHand   ? 'hand'   : 'active')
+        : (curActive < maxActive ? 'active' : 'hand');
 
-      for (const card of cards) {
-        const native = (card.slots || 'hand').toLowerCase() === 'active' ? 'active' : 'hand';
-        let slot;
-        if (native === 'hand') {
-          slot = (curHand + placedHand) < maxHand ? 'hand' : 'active';
-        } else {
-          slot = (curActive + placedActive) < maxActive ? 'active' : 'hand';
-        }
-        if (slot === 'hand') placedHand++; else placedActive++;
-
-        await copyCardToInventory(card.cardPath, state.characterSlug, slot, card.name);
-        // Clear this entry from pending — Firebase subscriber will refresh state
-        await remove(ref(db,
-          `${firebasePlayerPath(state.campaignId, state.characterSlug)}/pending_personal_loot/${card.key}`));
-      }
-
-      await loadAndRenderCards();
+      await copyCardToInventory(card.cardPath, state.characterSlug, slot, card.name);
+      await remove(ref(db,
+        `${firebasePlayerPath(state.campaignId, state.characterSlug)}/pending_personal_loot/${card.key}`));
+      // copyCardToInventory updated state.inventory in memory + re-rendered.
     } catch (e) {
       alert('Could not deliver loot: ' + e.message);
       okBtn.disabled    = false;
@@ -1561,11 +1727,16 @@ async function personalLootAccept(cards, fits) {
       return;
     }
   }
-  // No-space path: leave Firebase entries in place; badge stays.
 
   document.getElementById('personal-loot-overlay').style.display = 'none';
   okBtn.disabled    = false;
   okBtn.textContent = 'OK';
+
+  // For multi-card or no-space: leave Firebase entries in place (badge stays)
+  // and open Arrange so the player sees Incoming and can place each card.
+  if (!shouldDeliverSilently) {
+    openArrangeOverlay();
+  }
 }
 
 /**
@@ -1600,8 +1771,9 @@ const _gloot = {
   session:  null,
   active:   [],
   hand:     [],
-  incoming: [],
-  holding:  [],
+  incoming: [],   // claimed-but-not-placed (must be empty before Ready)
+  holding:  [],   // Phase 1 only: cards offered up to the holding pool
+  discard:  [],   // Phase 2 only: cards the player wants to permanently delete
   ready:    false,
   _initialised: false,  // True once we've snapshotted the player's inventory into the working zones for this session
 };
@@ -1633,6 +1805,7 @@ function onGroupLootUpdate(session) {
     _gloot.hand     = [...(state._handCards   || [])];
     _gloot.incoming = [];
     _gloot.holding  = [];
+    _gloot.discard  = [];
     _gloot.ready    = false;
     _gloot._initialised = true;
     openGroupLoot();
@@ -1656,6 +1829,7 @@ function closeGroupLoot() {
   _gloot.hand     = [];
   _gloot.incoming = [];
   _gloot.holding  = [];
+  _gloot.discard  = [];
   _gloot.ready    = false;
   _gloot._initialised = false;
 }
@@ -1701,47 +1875,37 @@ function renderGroupLootStrip(session, phase) {
       return;
     }
 
-    // Find the first unclaimed card — only it gets an active claim button
+    // Only the first unclaimed card gets an active claim button (left-to-right)
     const firstUnclaimedKey = cards.find(c => !c.claimedBy)?.key;
 
     for (const card of cards) {
       strip.appendChild(makeGroupLootStripTile(card, card.key === firstUnclaimedKey, 'claim'));
     }
   } else {
-    // Phase 3 — holding from all players
-    const holdingPool = collectHoldingPool(session);
-    if (holdingPool.length === 0) {
+    // Trade phase — single shared holding pool. Each card has exactly one place
+    // it can be: in the strip (unclaimed) OR in some player's incoming/zones
+    // (claimed). Once claimed it leaves the strip entirely.
+    const pool = Object.entries(session.holdingPool || {})
+      .map(([key, c]) => ({ key, ...c }))
+      .filter(c => !c.claimedBy);  // claimed cards leave the strip
+
+    // Players can't claim their own offered card
+    const claimable = pool.filter(c => c.ownerSlug !== state.characterSlug);
+
+    if (claimable.length === 0 && pool.length === 0) {
       strip.innerHTML = '<span class="trade-empty-hint">Nothing left to trade. Hit Ready to wrap up.</span>';
       return;
     }
-    const firstUnclaimedKey = holdingPool.find(c => !c.claimedBy)?.key;
-    for (const card of holdingPool) {
-      strip.appendChild(makeGroupLootStripTile(card, card.key === firstUnclaimedKey, 'trade'));
+    if (claimable.length === 0) {
+      strip.innerHTML = '<span class="trade-empty-hint">Only your own offers remain — wait or hit Ready.</span>';
+      return;
     }
-  }
-}
 
-/**
- * Returns all holding-zone entries from every player's group_state, flattened
- * into a single claimable pool. Each entry has .key (composite of owner+local
- * key) and .ownerSlug to support the trade transaction.
- */
-function collectHoldingPool(session) {
-  const states = session.playerStates || {};
-  const pool   = [];
-  for (const [slug, ps] of Object.entries(states)) {
-    if (slug === state.characterSlug) continue; // can't claim your own holding
-    const holding = ps.holding || {};
-    for (const [localKey, card] of Object.entries(holding)) {
-      pool.push({
-        key:      `${slug}:${localKey}`,
-        ownerSlug: slug,
-        localKey,
-        ...card,
-      });
+    const firstClaimableKey = claimable[0]?.key;
+    for (const card of claimable) {
+      strip.appendChild(makeGroupLootStripTile(card, card.key === firstClaimableKey, 'trade'));
     }
   }
-  return pool;
 }
 
 /**
@@ -1791,19 +1955,40 @@ function renderGroupLootZones() {
   const maxActive = fm.active_slots || 4;
   const maxHand   = fm.hand_slots   || 4;
 
+  const phase = (_gloot.session && _gloot.session.phase) || 'claim';
+
   document.getElementById('gl-active-header').textContent =
     `Active Slots (${_gloot.active.length} / ${maxActive})`;
   document.getElementById('gl-hand-header').textContent =
     `Hand (${_gloot.hand.length} / ${maxHand})`;
   document.getElementById('gl-incoming-header').textContent =
     `Incoming (${_gloot.incoming.length})`;
-  document.getElementById('gl-holding-header').textContent =
-    `Holding (${_gloot.holding.length})`;
+
+  // The 4th zone in the working area swaps role between phases:
+  //   Phase 1 (claim) — Holding: cards offered up to Phase 2 trade strip
+  //   Phase 2 (trade) — Discard: cards permanently deleted at Finalise
+  const extraHeader = document.getElementById('gl-extra-header');
+  const extraHint   = document.getElementById('gl-extra-hint');
+  const holdingZone = document.getElementById('gl-holding-zone');
+  const discardZone = document.getElementById('gl-discard-zone');
+
+  if (phase === 'trade') {
+    extraHeader.textContent = `Discard (${_gloot.discard.length})`;
+    extraHint.textContent   = 'Cards dropped here are permanently deleted when this phase finishes.';
+    holdingZone.style.display = 'none';
+    discardZone.style.display = '';
+  } else {
+    extraHeader.textContent = `Holding (${_gloot.holding.length})`;
+    extraHint.textContent   = 'Cards you\'d rather trade away than keep. They become claimable by other players in the trade phase.';
+    holdingZone.style.display = '';
+    discardZone.style.display = 'none';
+  }
 
   renderGlootZone('gl-active-zone',   _gloot.active);
   renderGlootZone('gl-hand-zone',     _gloot.hand);
   renderGlootZone('gl-incoming-zone', _gloot.incoming);
   renderGlootZone('gl-holding-zone',  _gloot.holding);
+  renderGlootZone('gl-discard-zone',  _gloot.discard);
 }
 
 function renderGlootZone(zoneId, cards) {
@@ -1863,23 +2048,13 @@ function renderGroupLootReady(session) {
   // Block Ready while incoming has cards to place
   readyBtn.disabled = _gloot.incoming.length > 0 && !_gloot.ready;
 
-  // Finalise button — enabled only when all known players are ready and
-  // (in trade phase) no holding cards remain anywhere.
+  // Finalise button — enabled only when every known player is Ready.
+  // In trade phase, leftover holdingPool entries are allowed (they return to
+  // their owner). In claim phase, pressing Finalise advances to trade phase
+  // automatically if anyone offered cards to Holding.
   const finaliseBtn = document.getElementById('btn-gl-finalise');
   const allReady = Array.from(slugs).every(s => states[s]?.ready);
-  const phase    = session.phase || 'claim';
-  let canFinalise = allReady;
-  if (phase === 'trade') {
-    const holdingExists = Array.from(slugs).some(s =>
-      Object.keys((states[s]?.holding) || {}).length > 0
-    );
-    canFinalise = canFinalise && !holdingExists;
-  } else if (phase === 'claim') {
-    // Claim phase can advance to trade phase OR straight to finalise. We
-    // advance to trade if anyone has holding; otherwise allow finalise.
-    canFinalise = allReady; // promotion to trade phase is implicit on Finalise
-  }
-  finaliseBtn.disabled = !canFinalise;
+  finaliseBtn.disabled = !allReady;
 }
 
 /**
@@ -1957,12 +2132,14 @@ async function gloot_claimGroupCard(card) {
  * so two simultaneous claimers can't both succeed.
  */
 async function gloot_claimHoldingCard(card) {
-  const ownerStateRef = ref(db,
-    `${firebaseLootPath(state.campaignId)}/playerStates/${card.ownerSlug}/holding/${card.localKey}`);
+  // Holding pool entries live at loot/holdingPool/{key}.
+  // Atomically marking claimedBy locks out other simultaneous claimers.
+  const poolRef = ref(db,
+    `${firebaseLootPath(state.campaignId)}/holdingPool/${card.key}`);
 
   let cardData;
-  const result = await runTransaction(ownerStateRef, (cur) => {
-    if (!cur) return; // already gone
+  const result = await runTransaction(poolRef, (cur) => {
+    if (!cur) return;          // already gone
     if (cur.claimedBy) return; // already grabbed
     cardData = cur;
     return { ...cur, claimedBy: state.characterSlug };
@@ -1974,10 +2151,9 @@ async function gloot_claimHoldingCard(card) {
   }
 
   _gloot.incoming.push({
-    _glKey:    `${card.ownerSlug}:${card.localKey}`,
+    _glKey:    card.key,
     _glSource: 'holding',
-    _glOwner:  card.ownerSlug,
-    _glLocalKey: card.localKey,
+    _glOwner:  cardData.ownerSlug,
     cardPath:  cardData.cardPath,
     name:      cardData.name,
     card_type: cardData.card_type,
@@ -1995,81 +2171,60 @@ async function gloot_claimHoldingCard(card) {
 
 // ─── Group loot — drag and drop ───────────────────────────────────────────────
 
-const _glootDrag = {
-  active:   false,
-  card:     null,
-  fromZone: null,
-  sourceEl: null,
-  ghost:    null,
-  offsetX:  0,
-  offsetY:  0,
-};
-
+// Maps the data-zone attribute on each drop target to the corresponding
+// _gloot working-zone key. Holding only exists in Phase 1; Discard only in
+// Phase 2. Filtering by phase happens in handleGlootDrop.
 const GLOOT_ZONE_IDS = {
   'gl-active':   'active',
   'gl-hand':     'hand',
   'gl-incoming': 'incoming',
   'gl-holding':  'holding',
+  'gl-discard':  'discard',
 };
 
+/**
+ * Pointerdown entry point for any draggable group-loot tile. Delegates the
+ * boilerplate (ghost, listeners, teardown) to the shared drag helper and only
+ * handles the drop logic.
+ */
 function glootDragStart(e, tile, card) {
-  if (e.button !== undefined && e.button !== 0) return;
-  e.preventDefault();
-  e.stopPropagation();
-
-  const rect = tile.getBoundingClientRect();
-  _glootDrag.active   = true;
-  _glootDrag.card     = card;
-  _glootDrag.sourceEl = tile;
-  _glootDrag.fromZone = tile.closest('[data-zone]')?.dataset.zone || null;
-  _glootDrag.offsetX  = e.clientX - rect.left;
-  _glootDrag.offsetY  = e.clientY - rect.top;
-
-  const ghost = tile.cloneNode(true);
-  ghost.className   = 'arrange-card-tile arrange-drag-ghost';
-  ghost.style.width = `${rect.width}px`;
-  ghost.style.left  = `${rect.left}px`;
-  ghost.style.top   = `${rect.top}px`;
-  document.body.appendChild(ghost);
-  _glootDrag.ghost = ghost;
-  tile.classList.add('arrange-drag-source');
-
-  document.addEventListener('pointermove', glootDragMove, { capture: true });
-  document.addEventListener('pointerup',   glootDragEnd,  { capture: true });
+  startDrag({
+    event:       e,
+    tile,
+    card,
+    ghostClass:  'arrange-drag-ghost',
+    sourceClass: 'arrange-drag-source',
+    onDrop:      handleGlootDrop,
+  });
 }
 
-function glootDragMove(e) {
-  if (!_glootDrag.active) return;
-  _glootDrag.ghost.style.left = `${e.clientX - _glootDrag.offsetX}px`;
-  _glootDrag.ghost.style.top  = `${e.clientY - _glootDrag.offsetY}px`;
-}
+/**
+ * Drop handler — invoked by the shared drag helper on pointerup.
+ * Resolves the target zone, enforces phase + native-slot rules, moves the
+ * card locally, and writes my group state to Firebase if Holding changed.
+ */
+async function handleGlootDrop({ event, card, fromZone }) {
+  const phase = (_gloot.session && _gloot.session.phase) || 'claim';
 
-async function glootDragEnd(e) {
-  if (!_glootDrag.active) return;
-  _glootDrag.active = false;
-  _glootDrag.ghost.remove();
-  _glootDrag.ghost = null;
-  _glootDrag.sourceEl.classList.remove('arrange-drag-source');
-  document.removeEventListener('pointermove', glootDragMove, { capture: true });
-  document.removeEventListener('pointerup',   glootDragEnd,  { capture: true });
+  // Build zone-element list, but skip whichever of Holding/Discard isn't valid
+  // for the current phase so a stray drop doesn't land in the wrong zone.
+  const zoneEls = Object.keys(GLOOT_ZONE_IDS)
+    .filter(name => {
+      if (name === 'gl-holding') return phase === 'claim';
+      if (name === 'gl-discard') return phase === 'trade';
+      return true;
+    })
+    .map(name => document.querySelector(`[data-zone="${name}"]`))
+    .filter(Boolean);
 
-  // Determine target zone
-  let target = null;
-  for (const zoneName of Object.keys(GLOOT_ZONE_IDS)) {
-    const el = document.querySelector(`[data-zone="${zoneName}"]`);
-    if (!el) continue;
-    const r = el.getBoundingClientRect();
-    if (e.clientX >= r.left && e.clientX <= r.right &&
-        e.clientY >= r.top  && e.clientY <= r.bottom) {
-      target = GLOOT_ZONE_IDS[zoneName];
-      break;
-    }
+  const targetZoneAttr = findZoneAt(event, zoneEls);
+  const target  = GLOOT_ZONE_IDS[targetZoneAttr] || null;
+  const fromKey = GLOOT_ZONE_IDS[fromZone]       || null;
+
+  if (!target || target === fromKey) {
+    renderGroupLoot();
+    return;
   }
-  if (!target) { renderGroupLoot(); return; }
-
-  const card     = _glootDrag.card;
-  const fromKey  = GLOOT_ZONE_IDS[_glootDrag.fromZone] || null;
-  if (target === fromKey) { renderGroupLoot(); return; }
 
   // Native-slot rule: hand-typed cards can't go to active. Silent bounce.
   if (target === 'active' && (card.slots || 'hand').toLowerCase() === 'hand') {
@@ -2078,13 +2233,12 @@ async function glootDragEnd(e) {
   }
 
   // Move locally
-  for (const k of ['active','hand','incoming','holding']) {
+  for (const k of ['active', 'hand', 'incoming', 'holding', 'discard']) {
     _gloot[k] = _gloot[k].filter(c => c !== card);
   }
   _gloot[target].push(card);
 
-  // If holding changed, persist to Firebase so the trade phase strip updates
-  // for everyone. Active/Hand/Incoming are local-only until Finalise.
+  // Persist holding to Firebase. (Discard is local-only until Finalise.)
   if (target === 'holding' || fromKey === 'holding') {
     await writeMyGroupState();
   }
@@ -2147,33 +2301,61 @@ async function toggleGlootReady() {
  *      loot session.
  */
 async function finaliseGroupLoot() {
-  // Phase progression: claim → trade if anyone has holding; trade → done
   const session = _gloot.session;
   if (!session) return;
 
   const phase = session.phase || 'claim';
+
   if (phase === 'claim') {
-    // Decide whether to advance to trade phase (anyone has holding?) or skip
+    // Phase progression: claim → trade if anyone has holding cards; otherwise
+    // finalise immediately. The transition needs to:
+    //   (a) flatten every player's holding into a single shared holdingPool,
+    //   (b) clear each player's holding (they no longer "own" the offered card
+    //       in their working area; it's only in the strip),
+    //   (c) clear ready flags so everyone has to ready up again,
+    //   (d) bump phase to 'trade'.
+    //
+    // We do this in one Firebase transaction so the schema flip is atomic.
     const states = session.playerStates || {};
     const anyHolding = Object.values(states).some(s =>
       Object.keys(s.holding || {}).length > 0);
 
     if (anyHolding) {
-      // Advance phase + clear everyone's ready (they need to ready again
-      // after seeing the trade strip).
       const sessionRef = ref(db, firebaseLootPath(state.campaignId));
       await runTransaction(sessionRef, (cur) => {
         if (!cur || cur.finalised || cur.phase === 'trade') return;
-        const ps = cur.playerStates || {};
-        for (const k of Object.keys(ps)) ps[k] = { ...ps[k], ready: false };
-        return { ...cur, phase: 'trade', playerStates: ps };
+
+        const newPool = {};
+        let entryIdx  = 0;
+        const ps      = cur.playerStates || {};
+        for (const [slug, st] of Object.entries(ps)) {
+          for (const [, card] of Object.entries(st.holding || {})) {
+            // Composite-key based on a monotonically growing index so reading
+            // the pool is order-stable.
+            newPool[`hp_${entryIdx++}`] = {
+              ownerSlug: slug,
+              cardPath:  card.cardPath  || '',
+              name:      card.name      || '',
+              card_type: card.card_type || '',
+              slots:     card.slots     || 'hand',
+              claimedBy: null,
+            };
+          }
+          // Clear per-player holding + ready
+          ps[slug] = { ...st, ready: false, holding: {} };
+        }
+        return { ...cur, phase: 'trade', playerStates: ps, holdingPool: newPool };
       }).catch(() => {});
-      _gloot.ready = false;
+
+      // Local: holding zone empties, discard zone takes its visual place.
+      // Flush my own holding too so the local state matches Firebase.
+      _gloot.holding = [];
+      _gloot.ready   = false;
       return; // overlay stays open in trade phase
     }
   }
 
-  // Otherwise: finalise for real
+  // Phase 2 finalise (or Phase 1 finalise with no holding): commit for real.
   const sessionRef = ref(db, firebaseLootPath(state.campaignId));
   const won = await runTransaction(sessionRef, (cur) => {
     if (!cur || cur.finalised) return; // someone beat us to it
@@ -2187,71 +2369,64 @@ async function finaliseGroupLoot() {
   // Remove the session entirely — the DM observer will close on null
   await remove(ref(db, firebaseLootPath(state.campaignId))).catch(() => {});
   closeGroupLoot();
-  await loadAndRenderCards();
+  // commitMyGroupLootResult mutated state.inventory inline via the helpers,
+  // so the sheet is already up-to-date. No re-read from GitHub needed.
 }
 
 /**
  * Commits this player's group loot result to GitHub.
  *
- *   - Cards in our Active/Hand that came from group claims or holding claims
- *     are copied into our inventory (player_slot set appropriately).
- *   - Cards still in Incoming were claimed but the player chose to drop them
- *     (rare — finalise should be blocked by validation, but we no-op safely).
- *   - For any holding cards we won during trade, delete the original from the
- *     prior owner's inventory.
+ *   - Cards in Active/Hand that came from a group-strip or holding-strip
+ *     claim are copied into our inventory (player_slot set appropriately).
+ *     For holding-source cards, also delete the original from the offerer.
+ *   - Cards we MOVED between Active↔Hand have their player_slot rewritten.
+ *   - Cards in Discard (Phase 2 only) that were originally in our inventory
+ *     are deleted from GitHub.
+ *   - Cards we offered to Holding that NOBODY claimed: their entries remain
+ *     in `loot/holdingPool` with `claimedBy === null` after Finalise. We
+ *     leave the original file in our inventory untouched.
  */
 async function commitMyGroupLootResult() {
   const slug = state.characterSlug;
 
-  // Helper to identify "fresh" cards — no _path, but have a _glSource
+  // Helper: "fresh" card = came from a strip claim (group or holding), not
+  // from the player's pre-existing inventory.
   const isFresh = c => !c._path && c._glSource;
 
-  // Active zone
-  for (const card of _gloot.active) {
-    if (!isFresh(card)) continue;
-    await copyCardToInventory(card.cardPath, slug, 'active', card.name);
-    // For holding-source cards, delete the previous owner's file
-    if (card._glSource === 'holding') {
-      try {
-        const { sha } = await readFile(card.cardPath);
-        await deleteFile(card.cardPath, sha, `Trade: ${card.name} to ${slug}`);
-      } catch (_) { /* best effort */ }
-    }
-  }
-  // Hand zone
-  for (const card of _gloot.hand) {
-    if (!isFresh(card)) continue;
-    await copyCardToInventory(card.cardPath, slug, 'hand', card.name);
-    if (card._glSource === 'holding') {
-      try {
-        const { sha } = await readFile(card.cardPath);
-        await deleteFile(card.cardPath, sha, `Trade: ${card.name} to ${slug}`);
-      } catch (_) { /* best effort */ }
+  // Active + Hand: copy fresh cards into our inventory (helper updates memory
+  // and disk); for holding-source cards, also delete the prior owner's file.
+  for (const [zone, slotName] of [['active', 'active'], ['hand', 'hand']]) {
+    for (const card of _gloot[zone]) {
+      if (!isFresh(card)) continue;
+      await copyCardToInventory(card.cardPath, slug, slotName, card.name);
+      if (card._glSource === 'holding') {
+        try {
+          const { sha } = await readFile(card.cardPath);
+          await deleteFile(card.cardPath, sha, `Trade: ${card.name} to ${slug}`);
+        } catch (e) {
+          console.warn('Could not delete prior owner file for', card.name, e);
+        }
+      }
     }
   }
 
-  // Cards we MOVED (between active ↔ hand) — persist player_slot
-  const originalActive = new Set((state._activeCards || []).map(c => c._path));
-  const originalHand   = new Set((state._handCards   || []).map(c => c._path));
+  // Player rearranged Active ↔ Hand: persist any slot changes
   for (const card of _gloot.active) {
-    if (card._path && originalHand.has(card._path)) {
-      const { content, sha } = await readFile(card._path);
-      const fm2 = parseFrontmatter(content);
-      fm2.player_slot = 'active';
-      await writeFile(card._path, serialiseFrontmatter(fm2), `Move ${card.name} to active slot`, sha);
+    if (card._path && cardSlot(card) !== 'active') {
+      await setCardSlotInInventory(card, 'active');
     }
   }
   for (const card of _gloot.hand) {
-    if (card._path && originalActive.has(card._path)) {
-      const { content, sha } = await readFile(card._path);
-      const fm2 = parseFrontmatter(content);
-      fm2.player_slot = 'hand';
-      await writeFile(card._path, serialiseFrontmatter(fm2), `Move ${card.name} to hand`, sha);
+    if (card._path && cardSlot(card) !== 'hand') {
+      await setCardSlotInInventory(card, 'hand');
     }
   }
 
-  // Cards we put in Holding that nobody claimed → keep them in inventory.
-  // Cards we put in Holding that were claimed → already removed above by the claimer's commit.
+  // Discard zone (Phase 2): permanently delete any inventory cards here
+  for (const card of _gloot.discard) {
+    if (!card._path) continue; // fresh-from-strip then discarded → never copied to us
+    await removeCardFromInventory(card, `Discard ${card.name} from ${slug}`);
+  }
 }
 
 // =====================================================
@@ -2395,110 +2570,72 @@ function renderArrangeZone(zoneId, cards, incoming) {
 
 // ─── Arrange drag-and-drop ────────────────────────────────────────────────────
 
-const _arrangeDrag = {
-  active:   false,
-  sourceEl: null,
-  ghost:    null,
-  card:     null,   // the card object being dragged
-  fromZone: null,   // zone id the card came from
-  offsetX:  0,
-  offsetY:  0,
-};
-
 /**
  * Starts a drag in the Arrange overlay.
- * Uses the same validated DOM-move pattern as the HP tracker.
+ *
+ * Uses the shared drag helper with a live-preview hook: as the player drags,
+ * the source tile is physically moved into whatever zone the cursor is over,
+ * giving immediate visual feedback. On drop, the helper's onDrop callback
+ * runs the post-move sync (`arrangeSyncFromDom`).
  *
  * @param {PointerEvent} e
  * @param {HTMLElement}  tile - The card tile element
  * @param {object}       card - The card data object
  */
 function arrangeDragStart(e, tile, card) {
-  if (e.button !== undefined && e.button !== 0) return;
-  e.preventDefault();
-  e.stopPropagation();
-
-  const rect = tile.getBoundingClientRect();
-
-  _arrangeDrag.active   = true;
-  _arrangeDrag.sourceEl = tile;
-  _arrangeDrag.card     = card;
-  _arrangeDrag.fromZone = tile.closest('.arrange-drop-zone')?.dataset.zone || null;
-  _arrangeDrag.offsetX  = e.clientX - rect.left;
-  _arrangeDrag.offsetY  = e.clientY - rect.top;
-
-  const ghost = tile.cloneNode(true);
-  ghost.className   = 'arrange-card-tile arrange-drag-ghost';
-  ghost.style.width = `${rect.width}px`;
-  ghost.style.left  = `${rect.left}px`;
-  ghost.style.top   = `${rect.top}px`;
-  document.body.appendChild(ghost);
-  _arrangeDrag.ghost = ghost;
-
-  tile.classList.add('arrange-drag-source');
-
-  document.addEventListener('pointermove', arrangeDragMove, { capture: true });
-  document.addEventListener('pointerup',   arrangeDragEnd,  { capture: true });
+  startDrag({
+    event:       e,
+    tile,
+    card,
+    ghostClass:  'arrange-drag-ghost',
+    sourceClass: 'arrange-drag-source',
+    onMove:      handleArrangeDragMove,
+    onDrop:      arrangeSyncFromDom,
+  });
 }
 
-function arrangeDragMove(e) {
-  if (!_arrangeDrag.active) return;
-
-  _arrangeDrag.ghost.style.left = `${e.clientX - _arrangeDrag.offsetX}px`;
-  _arrangeDrag.ghost.style.top  = `${e.clientY - _arrangeDrag.offsetY}px`;
-
+/**
+ * Live-preview hook: while dragging, move the source tile into whatever
+ * Arrange zone the cursor is currently over (excluding Incoming, which is
+ * read-only — cards leave it but never re-enter via drag).
+ */
+function handleArrangeDragMove({ event, sourceEl }) {
   // Find which drop zone the pointer is over
   let targetZone = null;
   for (const zone of document.querySelectorAll('.arrange-drop-zone')) {
     if (zone.dataset.zone === 'incoming') continue; // incoming is read-only
     const r = zone.getBoundingClientRect();
-    if (e.clientX >= r.left && e.clientX <= r.right &&
-        e.clientY >= r.top  && e.clientY <= r.bottom) {
+    if (event.clientX >= r.left && event.clientX <= r.right &&
+        event.clientY >= r.top  && event.clientY <= r.bottom) {
       targetZone = zone;
       break;
     }
   }
-
   if (!targetZone) return;
 
-  // Within the zone, find closest non-source card for ordering
-  const siblings = Array.from(targetZone.querySelectorAll('.arrange-card-tile:not(.arrange-drag-source)'));
-  let overEl = null;
-  for (const s of siblings) {
-    const r = s.getBoundingClientRect();
-    if (e.clientX >= r.left && e.clientX <= r.right &&
-        e.clientY >= r.top  && e.clientY <= r.bottom) {
-      overEl = s;
-      break;
-    }
-  }
+  // Within the zone, find the non-source card directly under the cursor for
+  // ordering purposes.
+  const overEl = findTileAt(event, targetZone, '.arrange-card-tile', 'arrange-drag-source');
 
-  // Move the source tile into the target zone
   if (overEl) {
     const r   = overEl.getBoundingClientRect();
     const mid = r.left + r.width / 2;
-    if (e.clientX < mid) {
-      targetZone.insertBefore(_arrangeDrag.sourceEl, overEl);
+    if (event.clientX < mid) {
+      targetZone.insertBefore(sourceEl, overEl);
     } else {
-      targetZone.insertBefore(_arrangeDrag.sourceEl, overEl.nextSibling);
+      targetZone.insertBefore(sourceEl, overEl.nextSibling);
     }
   } else {
     // Zone is empty or pointer past all cards — append to end
-    targetZone.appendChild(_arrangeDrag.sourceEl);
+    targetZone.appendChild(sourceEl);
   }
 }
 
-function arrangeDragEnd(e) {
-  if (!_arrangeDrag.active) return;
-  _arrangeDrag.active = false;
-
-  _arrangeDrag.ghost.remove();
-  _arrangeDrag.ghost = null;
-  _arrangeDrag.sourceEl.classList.remove('arrange-drag-source');
-
-  document.removeEventListener('pointermove', arrangeDragMove, { capture: true });
-  document.removeEventListener('pointerup',   arrangeDragEnd,  { capture: true });
-
+/**
+ * Drop handler: rebuild _arrange.* arrays from the current DOM positions,
+ * then run the same validation & cleanup the old arrangeDragEnd did.
+ */
+function arrangeSyncFromDom() {
   // Sync _arrange arrays from the current DOM positions — includes incoming zone
   // since incoming cards are now draggable into active/hand.
   // Use the master list built at overlay-open time — zone arrays are stale after moves.
@@ -2647,42 +2784,29 @@ async function finaliseArrange() {
   btn.textContent = 'Saving…';
 
   try {
-    // 1. Delete discarded cards — re-read for fresh SHA to avoid stale SHA errors
+    // 1. Delete discarded inventory cards (memory + GitHub)
     for (const card of _arrange.discard) {
-      if (!card._path) continue; // incoming loot card not yet on disk — nothing to delete
-      const { sha: freshSha } = await readFile(card._path);
-      await deleteFile(card._path, freshSha, `Discard ${card.name} from ${state.characterSlug}`);
+      if (!card._path) continue; // incoming personal-pending — nothing on disk
+      await removeCardFromInventory(card,
+        `Discard ${card.name} from ${state.characterSlug}`);
     }
 
-    // 2. Update player_slot on all owned cards that moved zones
-    const originalActive = new Set((state._activeCards || []).map(c => c._path));
-    const originalHand   = new Set((state._handCards   || []).map(c => c._path));
-
+    // 2. Persist Active↔Hand moves
     for (const card of _arrange.active) {
-      // Only update if it was originally in hand (i.e. actually moved to active)
-      if (card._path && originalHand.has(card._path)) {
-        const { content, sha } = await readFile(card._path);
-        const fm2 = parseFrontmatter(content);
-        fm2.player_slot = 'active';
-        await writeFile(card._path, serialiseFrontmatter(fm2), `Move ${card.name} to active slot`, sha);
+      if (card._path && cardSlot(card) !== 'active') {
+        await setCardSlotInInventory(card, 'active');
       }
     }
-
     for (const card of _arrange.hand) {
-      if (card._path && originalActive.has(card._path)) {
-        const { content, sha } = await readFile(card._path);
-        const fm2 = parseFrontmatter(content);
-        fm2.player_slot = 'hand';
-        await writeFile(card._path, serialiseFrontmatter(fm2), `Move ${card.name} to hand`, sha);
+      if (card._path && cardSlot(card) !== 'hand') {
+        await setCardSlotInInventory(card, 'hand');
       }
     }
 
-    // 3. Handle pending personal-loot incoming cards:
-    //    - Dragged into Active/Hand → copy to inventory + clear Firebase entry.
-    //    - Discarded → just clear Firebase entry (no file ever existed).
-    //    - Still in Incoming → leave the Firebase entry (player will arrange
-    //      again later). Validation prevents Finalise from completing in this
-    //      state when there are unplaced incoming cards (configured below).
+    // 3. Pending personal-loot incoming cards
+    //    - Dragged to Active/Hand → copy into inventory + clear Firebase
+    //    - Dragged to Discard    → clear Firebase only
+    //    - Still in Incoming     → blocked by validation
     const incomingPlaced = [
       ..._arrange.active.filter(c => c._isPersonalPending).map(c => ({ card: c, slot: 'active' })),
       ..._arrange.hand.filter(c => c._isPersonalPending).map(c => ({ card: c, slot: 'hand' })),
@@ -2691,7 +2815,6 @@ async function finaliseArrange() {
       await copyCardToInventory(card.cardPath, state.characterSlug, slot, card.name);
       await clearPersonalPending(card.key);
     }
-    // Discarded incoming entries — just remove the pending Firebase node
     for (const card of _arrange.discard) {
       if (card._isPersonalPending) {
         await clearPersonalPending(card.key);
@@ -2705,7 +2828,8 @@ async function finaliseArrange() {
   }
 
   closeArrangeOverlay();
-  await loadAndRenderCards();
+  // No need to reload from GitHub — the helpers above mutated state.inventory
+  // in memory as they went. The sheet is already up-to-date.
 }
 
 // =====================================================

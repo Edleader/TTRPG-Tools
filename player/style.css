@@ -694,6 +694,9 @@ html, body {
 }
 
 /* ── Card Detail Modal ─────────────────────────────────────── */
+/* z-index sits above all other overlays (personal loot ~10000, group loot
+   10001, drag ghost 20000 — modal must beat at least the loot overlays so
+   "click for details" works while a notification is open). */
 .modal-overlay {
   position:        fixed;
   inset:           0;
@@ -701,7 +704,7 @@ html, body {
   display:         flex;
   align-items:     flex-end;
   justify-content: center;
-  z-index:         160;
+  z-index:         15000;
   padding:         1rem;
 }
 @media (min-height: 600px) {
@@ -908,6 +911,18 @@ html, body {
   gap:       0.6rem;
 }
 
+/* Compact summary used when more than one card was sent — names listed
+   inline so the player knows what's coming without a giant tile grid. */
+.personal-loot-multi-summary {
+  font-size:    0.9rem;
+  font-weight:  500;
+  color:        var(--text);
+  padding:      0.5rem 0.7rem;
+  border:       1px dashed var(--border);
+  border-radius: 4px;
+  background:   var(--surface-2, var(--surface));
+}
+
 .personal-loot-actions {
   display:         flex;
   justify-content: flex-end;
@@ -1101,12 +1116,13 @@ html, body {
 .arrange-card-incoming .arrange-card-slot { color: var(--accent-dim); }
 
 
-/* Ghost clone while dragging */
+/* Ghost clone while dragging.
+   z-index must beat the highest overlay (group-loot overlay sits at 10001). */
 .arrange-drag-ghost {
   position:       fixed;
   pointer-events: none;
-  opacity:        0.8;
-  z-index:        170;
+  opacity:        0.85;
+  z-index:        20000;
   box-shadow:     0 6px 20px rgba(0,0,0,0.5);
   border-color:   var(--accent) !important;
 }

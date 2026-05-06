@@ -88,7 +88,10 @@
   <div id="app" style="display:none">
 
     <!-- Session inactive banner -->
-    <div id="session-banner" class="session-banner" style="display:none">
+    <!-- Default-visible: hidden by Firebase only when session_active confirms true.
+         Otherwise we'd fall into "session looks live but it's not" if the
+         listener fires slowly after refresh. -->
+    <div id="session-banner" class="session-banner">
       Session not active — view only
     </div>
 
@@ -426,9 +429,12 @@
           <p class="arrange-discard-hint">Cards you've claimed but haven't placed yet. Must be empty before you can hit Ready.</p>
           <div class="arrange-drop-zone" id="gl-incoming-zone" data-zone="gl-incoming"></div>
 
-          <div class="arrange-col-header arrange-col-header-hand" id="gl-holding-header">Holding</div>
-          <p class="arrange-discard-hint" id="gl-holding-hint">Cards you'd rather trade away than keep. They become claimable by other players in the trade phase.</p>
+          <!-- Phase 1: Holding — cards offered up to the trade strip in Phase 2.
+               Phase 2: Discard — cards the player wants to permanently delete. -->
+          <div class="arrange-col-header arrange-col-header-hand" id="gl-extra-header">Holding</div>
+          <p class="arrange-discard-hint" id="gl-extra-hint">Cards you'd rather trade away than keep. They become claimable by other players in the trade phase.</p>
           <div class="arrange-drop-zone" id="gl-holding-zone" data-zone="gl-holding"></div>
+          <div class="arrange-drop-zone" id="gl-discard-zone" data-zone="gl-discard" style="display:none"></div>
         </div>
 
       </div>

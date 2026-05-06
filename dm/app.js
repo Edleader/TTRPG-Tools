@@ -38,6 +38,7 @@ import {
 } from '../shared/config.js';
 
 import { escapeHtml, calcMaxSpellSlots, calcMaxHp } from '../shared/utils.js';
+import { startDrag, findTileAt } from '../shared/dragReorder.js';
 
 import { initializeApp }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
@@ -1549,100 +1550,57 @@ function hideAbilityTooltip() {
 // HP TRACKER — DRAG TO REORDER
 // =====================================================
 
-const _drag = {
-  active:   false,
-  sourceEl: null,  // the actual DOM card element (faded placeholder in the grid)
-  ghost:    null,  // floating clone that follows the pointer
-  offsetX:  0,
-  offsetY:  0,
-};
-
+/**
+ * Pointerdown entry for HP tracker cards. Skips when the click is on a
+ * button or input (so HP +/- and remove buttons still work normally).
+ */
 function hpDragStart(e) {
-  // Left-button pointer only; ignore clicks on interactive controls
   if (e.button !== undefined && e.button !== 0) return;
   if (e.target.closest('button, input')) return;
 
   const card = e.currentTarget;
   if (isNaN(parseInt(card.dataset.id))) return;
 
-  e.preventDefault();
-
-  const rect = card.getBoundingClientRect();
-
-  _drag.active   = true;
-  _drag.sourceEl = card;
-  _drag.offsetX  = e.clientX - rect.left;
-  _drag.offsetY  = e.clientY - rect.top;
-
-  // Build a floating ghost clone that follows the pointer — never touches the real DOM grid
-  const ghost = card.cloneNode(true);
-  ghost.className    = 'hp-entry hp-drag-ghost';
-  ghost.style.width  = `${rect.width}px`;
-  ghost.style.left   = `${rect.left}px`;
-  ghost.style.top    = `${rect.top}px`;
-  document.body.appendChild(ghost);
-  _drag.ghost = ghost;
-
-  // Fade the source card in-place; it stays in the grid as a placeholder
-  card.classList.add('drag-source');
-
-  document.addEventListener('pointermove', hpDragMove, { capture: true });
-  document.addEventListener('pointerup',   hpDragEnd,  { capture: true });
+  startDrag({
+    event:       e,
+    tile:        card,
+    card:        null,
+    ghostClass:  'hp-drag-ghost',
+    sourceClass: 'drag-source',
+    onMove:      handleHpDragMove,
+    onDrop:      handleHpDragEnd,
+  });
 }
 
-function hpDragMove(e) {
-  if (!_drag.active) return;
-
-  // Move ghost to follow the pointer — this is the only thing that runs on every move event
-  _drag.ghost.style.left = `${e.clientX - _drag.offsetX}px`;
-  _drag.ghost.style.top  = `${e.clientY - _drag.offsetY}px`;
-
+/**
+ * Live-preview hook for HP tracker drag. The source card moves around in
+ * the grid based on the cursor's horizontal position relative to the
+ * non-source card it's hovering over (left half = insert before, right
+ * half = insert after).
+ */
+function handleHpDragMove({ event, sourceEl }) {
   const container = document.getElementById('hp-entries');
-
-  // Find which non-source card the pointer is directly over (bounding box hit test)
-  let overEl = null;
-  for (const c of container.querySelectorAll('.hp-entry:not(.drag-source)')) {
-    const r = c.getBoundingClientRect();
-    if (e.clientX >= r.left && e.clientX <= r.right &&
-        e.clientY >= r.top  && e.clientY <= r.bottom) {
-      overEl = c;
-      break;
-    }
-  }
-
-  // Pointer is over empty space or the placeholder itself — don't move anything
+  const overEl    = findTileAt(event, container, '.hp-entry', 'drag-source');
   if (!overEl) return;
 
-  // Decide insert position based on which horizontal half of the target card the pointer is in
   const r   = overEl.getBoundingClientRect();
   const mid = r.left + r.width / 2;
-
-  if (e.clientX < mid) {
-    // Left half — insert the placeholder before this card
-    container.insertBefore(_drag.sourceEl, overEl);
+  if (event.clientX < mid) {
+    container.insertBefore(sourceEl, overEl);
   } else {
-    // Right half — insert the placeholder after this card
-    container.insertBefore(_drag.sourceEl, overEl.nextSibling);
+    container.insertBefore(sourceEl, overEl.nextSibling);
   }
 }
 
-function hpDragEnd() {
-  if (!_drag.active) return;
-  _drag.active = false;
-
-  if (_drag.ghost) { _drag.ghost.remove(); _drag.ghost = null; }
-
-  // Remove the faded placeholder style from the source card
-  if (_drag.sourceEl) { _drag.sourceEl.classList.remove('drag-source'); }
-
-  // Sync state.hpEntries order to match the new DOM order so the rest of the app stays correct
+/**
+ * Drop hook: sync state.hpEntries order to match the new DOM order so the
+ * rest of the app stays correct.
+ */
+function handleHpDragEnd() {
   const container = document.getElementById('hp-entries');
   const newOrder  = Array.from(container.querySelectorAll('.hp-entry[data-id]'))
                          .map(el => parseInt(el.dataset.id));
   state.hpEntries.sort((a, b) => newOrder.indexOf(a.id) - newOrder.indexOf(b.id));
-
-  document.removeEventListener('pointermove', hpDragMove, { capture: true });
-  document.removeEventListener('pointerup',   hpDragEnd,  { capture: true });
 }
 
 // =====================================================
@@ -2405,13 +2363,19 @@ async function flushPendingPersonalLootToGitHub() {
       const { content, sha } = await readFile(pf.path);
       const fm = parseFrontmatter(content);
       const existing = Array.isArray(fm.pending_personal_loot) ? fm.pending_personal_loot : [];
-      // Merge: append new entries, dedup is not strict — if the player already
-      // has identical pending entries from a prior crash, that's fine.
-      fm.pending_personal_loot = [...existing, ...entries];
+
+      // Dedup against existing entries by (cardPath, sentAt) signature so a
+      // double-end-session click doesn't double-write. The new entries from
+      // Firebase always have sentAt; existing entries from a prior flush
+      // also have sentAt (preserved by the player rehydrate).
+      const sigSeen = new Set(existing.map(e => `${e.cardPath || ''}|${e.sentAt || ''}`));
+      const fresh = entries.filter(e => !sigSeen.has(`${e.cardPath || ''}|${e.sentAt || ''}`));
+      fm.pending_personal_loot = [...existing, ...fresh];
+
       await writeFile(pf.path, serialiseFrontmatter(fm),
         `Flush pending personal loot for ${slug} on session end`, sha);
-      // Clear the Firebase node so it doesn't reappear when the session
-      // restarts (rehydrate will re-push it).
+
+      // Clear Firebase last so a failure in writeFile leaves data intact.
       await set(ref(_db,
         `${firebaseCampaignPath(state.activeCampaign.id)}/session/${slug}/pending_personal_loot`), null);
     } catch (e) {
