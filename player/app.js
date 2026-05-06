@@ -29,10 +29,15 @@ import {
   firebaseLootPath,
   firebaseTradePath,
   HP_DEBOUNCE_MS,
+  GROUP_LOOT_LOCK_MS,
+  LOOT_RESOLVED_AUTOCLOSE_MS,
+  ARRANGE_VALIDATION_FLASH_MS,
 } from '../shared/config.js';
 
+import { escapeHtml, calcMaxSpellSlots, calcMaxHp } from '../shared/utils.js';
+
 import { initializeApp }      from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getDatabase, ref, onValue, set, get, update, runTransaction, remove }
+import { getDatabase, ref, onValue, set, get, update, runTransaction, remove, push }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
 
 // =====================================================
@@ -80,37 +85,6 @@ const state = {
   _activeCards: [],
   _handCards:   [],
 };
-
-// =====================================================
-// SPELL SLOT FORMULA
-// =====================================================
-
-/**
- * Calculates max spell slots.
- * Base = floor(Mind / 2), capped at 6.
- * If Mind > 12: add 1 per character level on top.
- *
- * @param {number} mind  - Mind stat value
- * @param {number} level - Character level
- * @returns {number}
- */
-function calcMaxSpellSlots(mind, level) {
-  const base  = Math.min(6, Math.floor(mind / 2));
-  const bonus = mind > 12 ? level : 0;
-  return base + bonus;
-}
-
-/**
- * Calculates max HP.
- * Max HP = (Level + Might) × 2
- *
- * @param {number} level
- * @param {number} might
- * @returns {number}
- */
-function calcMaxHp(level, might) {
-  return (level + might) * 2;
-}
 
 // =====================================================
 // SCREEN HELPERS
@@ -746,13 +720,16 @@ function closeTradeOverlay() {
 /**
  * Renders the "Your Cards" zone — all cards the player currently owns
  * that are not already in their offer zone.
+ *
+ * Inventory cards carry their repo path on `_path`; published trade entries
+ * carry the same path on `cardPath`. We use that path as the identity key.
  */
 function renderTradeYoursZone() {
   const zone = document.getElementById('trade-yours-zone');
   zone.innerHTML = '';
 
-  const offeredPaths = new Set(_trade.offered.map(c => c.cardPath + '|' + c.name));
-  const available    = _trade.yours.filter(c => !offeredPaths.has(c._path ? (c._path + '|' + (c.name || '')) : ''));
+  const offeredPaths = new Set(_trade.offered.map(c => c.cardPath));
+  const available    = _trade.yours.filter(c => c._path && !offeredPaths.has(c._path));
 
   if (available.length === 0) {
     zone.innerHTML = '<div class="arrange-empty">No cards available.</div>';
@@ -921,12 +898,15 @@ async function tradeDragEnd(e) {
  * Publishes a card to the trade pool in Firebase.
  * The card's file is NOT deleted from GitHub — it stays in the player's inventory
  * until another player claims it, at which point it is moved.
+ *
+ * Uses Firebase push() to generate a guaranteed-unique key. (Earlier versions
+ * used `${Date.now()}_${slug}`, which could collide on rapid double-tap.)
  */
 async function publishTradeOffer(card) {
   if (!card._path) return; // safety — only inventory cards can be traded
-  const tradeRef = ref(db, firebaseTradePath(state.campaignId));
-  const newEntry = ref(db, `${firebaseTradePath(state.campaignId)}/${Date.now()}_${state.characterSlug}`);
-  await set(newEntry, {
+  const tradePoolRef = ref(db, firebaseTradePath(state.campaignId));
+  const newEntryRef  = push(tradePoolRef);
+  await set(newEntryRef, {
     offeredBy:  state.characterSlug,
     cardPath:   card._path,
     name:       card.name       || '',
@@ -948,8 +928,13 @@ async function retractTradeOffer(key) {
 /**
  * Claims a card from the trade pool. Uses a Firebase transaction to prevent
  * two players claiming the same card simultaneously.
- * Moves the card file from the offering player's inventory to this player's
- * inventory (copy + delete), then removes the trade entry.
+ *
+ * Flow:
+ *   1. Mark the trade entry as claimedBy us (locks out other claimers)
+ *   2. If we have space → deliver immediately and remove the trade entry
+ *   3. If we have no space → open the arrange overlay; finaliseArrange (or
+ *      closeArrangeOverlay if the player cancels) handles the trade entry
+ *      cleanup or claim release.
  */
 async function claimTradeCard(card) {
   const tradeRef = ref(db, `${firebaseTradePath(state.campaignId)}/${card.key}`);
@@ -978,49 +963,56 @@ async function claimTradeCard(card) {
 
   const preferredSlot = (card.slots || 'hand') === 'active' && curActive < maxActive ? 'active' : 'hand';
 
-  // Deliver card to this player's inventory (copy from offerer's path)
+  // Build the in-flight card record. The _isTrade flag tells finaliseArrange
+  // to use the trade delivery path (delete offerer's file + remove trade entry)
+  // instead of the loot delivery path.
   const incomingCard = {
     key:       card.key,
     cardPath:  card.cardPath,
     name:      card.name,
     card_type: card.card_type,
     slots:     card.slots,
-    assignTo:  state.characterSlug,
+    _isTrade:  true,
   };
 
   if (hasSpace) {
     const actualSlot = preferredSlot === 'active' && curActive < maxActive ? 'active'
                      : curHand < maxHand ? 'hand' : 'active';
-    await deliverTradeCard(incomingCard, actualSlot);
+    try {
+      await deliverTradeCardToPlayer(incomingCard, state.characterSlug, actualSlot);
+      await loadAndRenderCards();
+    } catch (e) {
+      // Delivery failed — release the claim so the offerer (or another player) can retry
+      alert('Failed to receive the traded card: ' + e.message);
+      await releaseTradeClaim(card.key);
+    }
   } else {
+    // No space — go through the arrange overlay. finaliseArrange will deliver
+    // and clean up; closeArrangeOverlay will release the claim if cancelled.
     state.lootNotifyCards = [incomingCard];
     openArrangeOverlay({ incoming: [incomingCard], context: 'loot-group', preferredSlot });
   }
-
-  // Remove the trade entry now that delivery is done (or in-progress via arrange)
-  await remove(tradeRef).catch(() => {});
 }
 
 /**
- * Delivers a traded card to this player's inventory and deletes it from the
- * offering player's inventory.
+ * Releases a trade claim by clearing claimedBy on the trade entry.
+ * Used when a claim transaction succeeds but delivery fails or is cancelled,
+ * so the card can be retried or retracted by the offerer.
  *
- * @param {object} card       - Trade card object (has .cardPath pointing to offerer's file)
- * @param {string} playerSlot - 'hand' or 'active'
+ * @param {string} tradeKey - Firebase key of the trade entry
  */
-async function deliverTradeCard(card, playerSlot) {
-  // card.cardPath is the offering player's file path — copy it to this player
-  await deliverCardToPlayer(card, state.characterSlug, playerSlot);
-
-  // Delete from the offering player's inventory
+async function releaseTradeClaim(tradeKey) {
+  const tradeRef = ref(db, `${firebaseTradePath(state.campaignId)}/${tradeKey}`);
   try {
-    const { sha } = await readFile(card.cardPath);
-    await deleteFile(card.cardPath, sha, `Trade: ${card.name} to ${state.characterSlug}`);
+    await runTransaction(tradeRef, (current) => {
+      if (!current) return;                              // already gone
+      if (current.claimedBy !== state.characterSlug) return; // not our claim
+      const { claimedBy: _drop, ...rest } = current;
+      return rest;
+    });
   } catch (e) {
-    console.warn('Could not delete traded card from offerer inventory:', e);
+    console.warn('Could not release trade claim:', e);
   }
-
-  await loadAndRenderCards();
 }
 
 // =====================================================
@@ -1102,12 +1094,25 @@ async function tryDeliverMyCards(myCards) {
   const needsSpace = incomingHand.length > freeHand || incomingActive.length > totalFree;
 
   if (!needsSpace) {
-    // Enough room — deliver straight away
+    // Enough room — deliver straight away. Place each card in the slot that
+    // best fits its native type, falling back to whichever zone has space.
     try {
+      let placedHand   = 0;  // how many cards we've placed into hand this round
+      let placedActive = 0;  // how many we've placed into active
+
       for (const card of myCards) {
-        const slot = (card.slots || 'hand') === 'hand' ? 'hand'
-          : (curHand + incomingActive.indexOf(card)) < maxHand ? 'hand' : 'active';
-        await deliverCardToPlayer(card, state.characterSlug, slot);
+        const native = (card.slots || 'hand') === 'active' ? 'active' : 'hand';
+
+        // Prefer the native slot; if it's full, spill into the other.
+        let slot;
+        if (native === 'hand') {
+          slot = (curHand + placedHand) < maxHand ? 'hand' : 'active';
+        } else {
+          slot = (curActive + placedActive) < maxActive ? 'active' : 'hand';
+        }
+
+        if (slot === 'hand') placedHand++; else placedActive++;
+        await deliverLootCardToPlayer(card, state.characterSlug, slot);
       }
       await loadAndRenderCards();
     } catch (e) {
@@ -1121,8 +1126,9 @@ async function tryDeliverMyCards(myCards) {
 }
 
 /**
- * Shows a brief "All loot resolved!" message then auto-closes after 5 seconds.
- * Works for both player group loot overlay and standalone.
+ * Shows a brief "All loot resolved!" message then auto-closes after
+ * LOOT_RESOLVED_AUTOCLOSE_MS. Works for both player group loot overlay and
+ * standalone.
  */
 function showAllLootResolved() {
   // Reuse the group loot overlay for the resolved message
@@ -1140,7 +1146,7 @@ function showAllLootResolved() {
   closeBtn.style.display   = '';
   overlay.style.display    = '';
 
-  let secs = 5;
+  let secs = Math.round(LOOT_RESOLVED_AUTOCLOSE_MS / 1000);
   const countdown = setInterval(() => {
     secs--;
     sub.textContent = secs > 0
@@ -1154,19 +1160,24 @@ function showAllLootResolved() {
 }
 
 /**
- * Copies a card from the master library to this player's cards folder.
- * Sets player_slot in the frontmatter. Marks card as claimed in Firebase.
+ * Copies a card .md file from `srcPath` into a player's cards/ folder, setting
+ * `player_slot` in the frontmatter. Picks a non-colliding filename if a card
+ * with the same name already exists in the player's inventory.
  *
- * @param {object} card       - Loot card from Firebase (must have .key and .cardPath)
- * @param {string} slug       - Character slug
- * @param {string} playerSlot - 'hand' or 'active'
+ * Pure GitHub operation — does NOT write to Firebase. Use the deliver* wrappers
+ * below to perform the relevant Firebase bookkeeping for loot vs trade.
+ *
+ * @param {string} srcPath    - Repo path of the source card file
+ * @param {string} slug       - Destination player's character slug
+ * @param {string} playerSlot - 'hand' or 'active' — written into frontmatter
+ * @param {string} cardName   - Used in the commit message
+ * @returns {Promise<string>} The destination path the file was written to
  */
-async function deliverCardToPlayer(card, slug, playerSlot) {
-  const baseFilename = card.cardPath.split('/').pop();
+async function copyCardToInventory(srcPath, slug, playerSlot, cardName) {
+  const baseFilename = srcPath.split('/').pop();
   const baseName     = baseFilename.replace(/\.md$/, '');
   const cardsDir     = `${state.campaignPath}/players/${slug}/cards`;
 
-  // If a file with this name already exists, append a numeric suffix
   let filename = baseFilename;
   let destPath = `${cardsDir}/${filename}`;
   try {
@@ -1180,10 +1191,25 @@ async function deliverCardToPlayer(card, slug, playerSlot) {
     }
   } catch (_) { /* cardsDir doesn't exist yet — first card */ }
 
+  await copyFile(srcPath, destPath, `Give ${cardName} to ${slug}`, { player_slot: playerSlot });
+  return destPath;
+}
+
+/**
+ * Delivers a loot card to a player's inventory:
+ *   - Copies the card file from the master library into the player's cards/
+ *   - Marks the loot session entry as claimed by this player in Firebase
+ *
+ * @param {object} card       - Loot card from Firebase (must have .key and .cardPath)
+ * @param {string} slug       - Receiving player's character slug
+ * @param {string} playerSlot - 'hand' or 'active'
+ */
+async function deliverLootCardToPlayer(card, slug, playerSlot) {
   try {
-    await copyFile(card.cardPath, destPath, `Give ${card.name} to ${slug}`, { player_slot: playerSlot });
+    await copyCardToInventory(card.cardPath, slug, playerSlot, card.name);
+
+    // Mark the loot session entry as claimed
     const cardRef = ref(db, `${firebaseLootPath(state.campaignId)}/cards/${card.key}`);
-    // Write a clean object — avoid spreading undefined/null fields that Firebase rejects
     await set(cardRef, {
       cardPath:   card.cardPath,
       name:       card.name       || '',
@@ -1194,9 +1220,37 @@ async function deliverCardToPlayer(card, slug, playerSlot) {
       resolvedAt: Date.now(),
     });
   } catch (e) {
-    console.error(`Failed to deliver ${card.name}:`, e);
-    throw e; // re-throw so callers can surface errors
+    console.error(`Failed to deliver loot card ${card.name}:`, e);
+    throw e;
   }
+}
+
+/**
+ * Delivers a traded card to the claimer's inventory:
+ *   - Copies the card file from the offerer's inventory into the claimer's
+ *   - Deletes the original from the offerer's inventory
+ *   - Removes the trade pool entry from Firebase
+ *
+ * @param {object} card       - Trade card from Firebase (must have .key, .cardPath)
+ * @param {string} slug       - Claiming player's character slug
+ * @param {string} playerSlot - 'hand' or 'active'
+ */
+async function deliverTradeCardToPlayer(card, slug, playerSlot) {
+  // 1. Copy from offerer's inventory into ours
+  await copyCardToInventory(card.cardPath, slug, playerSlot, card.name);
+
+  // 2. Delete the offerer's original. If this fails the card is duplicated —
+  //    log it but don't abort, because the claimer already has their copy.
+  try {
+    const { sha } = await readFile(card.cardPath);
+    await deleteFile(card.cardPath, sha, `Trade: ${card.name} to ${slug}`);
+  } catch (e) {
+    console.warn('Could not delete traded card from offerer inventory:', e);
+  }
+
+  // 3. Remove the trade pool entry now that delivery is complete
+  const tradeRef = ref(db, `${firebaseTradePath(state.campaignId)}/${card.key}`);
+  await remove(tradeRef).catch(() => {});
 }
 
 /**
@@ -1231,9 +1285,7 @@ async function passCardToGroup(card) {
 
 // ─── Group loot screen ─────────────────────────────────────────────────────────
 
-const GROUP_LOOT_LOCK_MS = 3000;
-
-// Whether the initial 3s lock has passed for this group loot session
+// Whether the initial GROUP_LOOT_LOCK_MS lock has passed for this group loot session
 let _groupLootUnlocked = false;
 
 /**
@@ -1422,7 +1474,7 @@ async function claimGroupCard(key, slotChoice) {
     let actualSlot = slotChoice;
     if (slotChoice === 'active' && curActive >= maxActive) actualSlot = 'hand';
     if (slotChoice === 'hand'   && curHand   >= maxHand)   actualSlot = 'active';
-    await deliverCardToPlayer(incomingCard, state.characterSlug, actualSlot);
+    await deliverLootCardToPlayer(incomingCard, state.characterSlug, actualSlot);
     await loadAndRenderCards();
   } else {
     // No space at all — go straight to Arrange UI
@@ -1500,13 +1552,26 @@ function openArrangeOverlay({ incoming = [], context = 'standalone', preferredSl
 
 /**
  * Closes the Arrange overlay without saving anything.
+ *
+ * If any incoming card was a trade we hold a claim on, release the claim so
+ * the offerer can retract it or another player can take it. Loot claims are
+ * not released here because the loot session is shared across players —
+ * leaving the card unclaimed in the loot pool is the correct behaviour.
  */
 function closeArrangeOverlay() {
+  // Release any in-flight trade claims before clearing state
+  for (const card of state.lootNotifyCards) {
+    if (card._isTrade && card.key) {
+      releaseTradeClaim(card.key); // fire-and-forget — UI doesn't wait
+    }
+  }
+
   document.getElementById('arrange-overlay').style.display = 'none';
   document.getElementById('arrange-validation').style.display = 'none';
   _arrange.active = _arrange.hand = _arrange.discard = _arrange.incoming = [];
   _arrange.context = null;
   state.pendingLootArrange = false;
+  state.lootNotifyCards    = [];
 }
 
 /**
@@ -1552,9 +1617,13 @@ function renderArrangeZone(zoneId, cards, incoming) {
 
   for (const card of cards) {
     const tile = document.createElement('div');
+    // ID priority: inventory cards use their file path (unique on disk), then
+    // Firebase-keyed cards (loot or trade) use the key, then a final fallback
+    // for cards with neither. Two same-named loot drops would collide on the
+    // old "filename + name" scheme — using the Firebase key avoids that.
     const cardId = card._path
       ? card._path.split('/').pop()
-      : (card.cardPath ? card.cardPath.split('/').pop() + '_' + card.name : card.name + '_' + Math.random());
+      : (card.key ? `key:${card.key}` : `name:${card.name}_${Math.random()}`);
     tile.className      = 'arrange-card-tile card-type-' + (card.card_type || 'item').toLowerCase();
     tile.dataset.cardId = cardId;
     if (incoming) tile.classList.add('arrange-card-incoming');
@@ -1692,10 +1761,11 @@ function arrangeDragEnd(e) {
   // Use the master list built at overlay-open time — zone arrays are stale after moves.
   const allCards = _arrange.allCards;
 
+  // Mirror of the ID scheme used in renderArrangeZone above — keep in sync.
   function resolveCardId(id) {
     return allCards.find(c => {
       if (c._path) return c._path.split('/').pop() === id;
-      if (c.cardPath) return (c.cardPath.split('/').pop() + '_' + c.name) === id;
+      if (c.key)   return `key:${c.key}` === id;
       return false;
     });
   }
@@ -1788,7 +1858,9 @@ function showArrangeValidation(msg) {
   const valEl = document.getElementById('arrange-validation');
   valEl.innerHTML     = `<div>${escapeHtml(msg)}</div>`;
   valEl.style.display = '';
-  setTimeout(() => { if (valEl.innerHTML.includes(escapeHtml(msg))) valEl.style.display = 'none'; }, 4000);
+  setTimeout(() => {
+    if (valEl.innerHTML.includes(escapeHtml(msg))) valEl.style.display = 'none';
+  }, ARRANGE_VALIDATION_FLASH_MS);
 }
 
 // ─── Arrange finalise ─────────────────────────────────────────────────────────
@@ -1853,23 +1925,40 @@ async function finaliseArrange() {
       }
     }
 
-    // 3. Handle incoming loot cards:
-    //    - Cards the player dragged into active/hand → deliver to their inventory
-    //    - Cards still in the incoming zone → pass to group loot automatically
+    // 3. Handle incoming cards (loot or trade):
+    //    - Dragged into active/hand → deliver to inventory via the correct path
+    //    - Left in incoming zone → loot goes to group; trade claims are released
+    //    - Dragged to discard → already deleted in step 1; for trades, also
+    //      release the claim since the player has explicitly refused the card
     for (const card of state.lootNotifyCards) {
-      const isInActive  = _arrange.active.some(c => c.key === card.key || c.name === card.name);
-      const isInHand    = _arrange.hand.some(c => c.key === card.key || c.name === card.name);
-      const isInDiscard = _arrange.discard.some(c => c.key === card.key || c.name === card.name);
-      const isInIncoming = _arrange.incoming.some(c => c.key === card.key || c.name === card.name);
+      const isInActive   = _arrange.active.some(c => c.key === card.key);
+      const isInHand     = _arrange.hand.some(c => c.key === card.key);
+      const isInIncoming = _arrange.incoming.some(c => c.key === card.key);
+      const isInDiscard  = _arrange.discard.some(c => c.key === card.key);
 
       if (isInActive || isInHand) {
         const slot = isInActive ? 'active' : 'hand';
-        await deliverCardToPlayer(card, state.characterSlug, slot);
+        if (card._isTrade) {
+          await deliverTradeCardToPlayer(card, state.characterSlug, slot);
+        } else {
+          await deliverLootCardToPlayer(card, state.characterSlug, slot);
+        }
       } else if (isInIncoming) {
-        // Left unplaced — pass to group
-        await passCardToGroup(card);
+        if (card._isTrade) {
+          // Player chose not to make space — release the claim so the offerer
+          // can keep it on offer (or retract it).
+          await releaseTradeClaim(card.key);
+        } else {
+          // Loot left unplaced — pass to group
+          await passCardToGroup(card);
+        }
+      } else if (isInDiscard && card._isTrade) {
+        // The card was discarded BUT the file at card.cardPath belonged to the
+        // offerer, not us. Step 1 above won't have deleted it (no card._path).
+        // Release the claim so the offerer's card stays put.
+        await releaseTradeClaim(card.key);
       }
-      // isInDiscard: card is already in _arrange.discard which was deleted in step 1
+      // isInDiscard for loot: card never existed on disk for us — nothing to do
     }
   } catch (e) {
     alert('Something went wrong while saving: ' + e.message);
@@ -1878,9 +1967,11 @@ async function finaliseArrange() {
     return;
   }
 
+  // Clear lootNotifyCards before closing so closeArrangeOverlay's trade-claim
+  // safety net doesn't try to release claims we just delivered.
+  state.lootNotifyCards = [];
   closeArrangeOverlay(); // clears pendingLootArrange — next Firebase tick will show resolved if appropriate
   await loadAndRenderCards();
-  state.lootNotifyCards = [];
 }
 
 // =====================================================
@@ -1920,19 +2011,6 @@ function toggleQref() {
   body.style.display        = open ? '' : 'none';
   btn.setAttribute('aria-expanded', String(open));
   btn.querySelector('.qref-arrow').innerHTML = open ? '&#9660;' : '&#9654;';
-}
-
-// =====================================================
-// UTILITIES
-// =====================================================
-
-function escapeHtml(str) {
-  if (str == null) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }
 
 // =====================================================

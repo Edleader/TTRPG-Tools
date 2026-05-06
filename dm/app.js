@@ -35,7 +35,10 @@ import {
   FIREBASE_CONFIG,
   firebaseCampaignPath,
   firebaseLootPath,
+  LOOT_RESOLVED_AUTOCLOSE_MS,
 } from '../shared/config.js';
+
+import { escapeHtml, calcMaxSpellSlots, calcMaxHp } from '../shared/utils.js';
 
 import { initializeApp }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
@@ -1121,15 +1124,13 @@ function renderPlayerPanel(files) {
   for (const pf of state.playerFiles) {
     const fm   = pf.frontmatter;
     const slug = pf.path.split('/players/')[1]?.split('/')[0] || '';
-    const maxHp = fm.level && fm.might ? (fm.level + fm.might) * 2 : '?';
+    const maxHp = fm.level && fm.might ? calcMaxHp(fm.level, fm.might) : '?';
     const liveHp = state.playerHpLive[slug];
     const currentHp = liveHp !== undefined ? liveHp : (fm.hp_current !== undefined ? fm.hp_current : maxHp);
 
     // Populate spell slots from frontmatter if Firebase hasn't pushed yet
     if (!state.playerSlotsLive[slug] && fm.mind !== undefined && fm.level !== undefined) {
-      const mind    = fm.mind || 0;
-      const level   = fm.level || 1;
-      const maxSlots = Math.min(6, Math.floor(mind / 2)) + (mind > 12 ? level : 0);
+      const maxSlots = calcMaxSpellSlots(fm.mind, fm.level || 1);
       if (maxSlots > 0) {
         state.playerSlotsLive[slug] = {
           spent: typeof fm.spell_slots_spent === 'number' ? fm.spell_slots_spent : 0,
@@ -1952,21 +1953,6 @@ function filenameLabel(path) {
 }
 
 /**
- * Escapes HTML special characters to prevent XSS when inserting into innerHTML.
- *
- * @param {string} str
- * @returns {string}
- */
-function escapeHtml(str) {
-  if (str === null || str === undefined) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-/**
  * Escapes a string for safe use as a RegExp pattern.
  *
  * @param {string} str
@@ -2373,8 +2359,9 @@ function renderDmObserverCards(session) {
 }
 
 /**
- * Shows an "All loot resolved!" message in the DM observer, then auto-closes after 5s.
- * Calling this while a countdown is already running is a no-op.
+ * Shows an "All loot resolved!" message in the DM observer, then auto-closes
+ * after LOOT_RESOLVED_AUTOCLOSE_MS. Calling this while a countdown is already
+ * running is a no-op.
  */
 let _dmLootResolvedTimer = null;
 function showDmLootResolved() {
@@ -2384,7 +2371,8 @@ function showDmLootResolved() {
   const subEl     = overlay.querySelector('.loot-observer-sub');
   const abandonBtn = document.getElementById('btn-dm-abandon-loot');
 
-  if (subEl) subEl.textContent = 'All loot resolved! Closing in 5s…';
+  const totalSecs = Math.round(LOOT_RESOLVED_AUTOCLOSE_MS / 1000);
+  if (subEl) subEl.textContent = `All loot resolved! Closing in ${totalSecs}s…`;
   if (abandonBtn) abandonBtn.style.display = 'none';
 
   // Add an early-close button if not already present
@@ -2402,7 +2390,7 @@ function showDmLootResolved() {
     footer.appendChild(earlyClose);
   }
 
-  let secs = 5;
+  let secs = totalSecs;
   _dmLootResolvedTimer = setInterval(() => {
     secs--;
     if (subEl) subEl.textContent = secs > 0 ? `All loot resolved! Closing in ${secs}s…` : '';
