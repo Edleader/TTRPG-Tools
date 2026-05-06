@@ -35,14 +35,13 @@ import {
   FIREBASE_CONFIG,
   firebaseCampaignPath,
   firebaseLootPath,
-  LOOT_RESOLVED_AUTOCLOSE_MS,
 } from '../shared/config.js';
 
 import { escapeHtml, calcMaxSpellSlots, calcMaxHp } from '../shared/utils.js';
 
 import { initializeApp }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getDatabase, ref, onValue, set, remove }
+import { getDatabase, ref, onValue, set, remove, push, runTransaction, get }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
 
 const _fbApp = initializeApp(FIREBASE_CONFIG);
@@ -70,6 +69,7 @@ const state = {
   playerHpLive:        {},   // { [slug]: currentHp } — live from Firebase
   playerSlotsLive:     {},   // { [slug]: { spent, max } } — live spell slots from Firebase
   playerRestRequests:  {},   // { [slug]: { type, status, requestedAt } } — pending rests
+  playerPendingLoot:   {},   // { [slug]: count } — pending personal loot the player still owes
   sessionActive:    false,   // Whether the DM has started the session
   autoApproveRests: false,   // When true, rest requests are approved instantly
   backgroundDone:   false,   // True once background content load is complete
@@ -77,7 +77,8 @@ const state = {
   _lootFbUnsub:     null,    // Firebase listener for the loot session observer
   lootLibrary:      [],      // [{ path, fm }] — all cards in the active campaign's card library
   lootStaged:       [],      // Cards staged in the loot modal: [{ path, fm, assignTo }]
-                             //   assignTo is a player slug or 'group'
+                             //   assignTo is a player slug; in group mode it is always 'group'
+  lootMode:         null,    // 'group' | 'personal' — which DM loot mode is active
 };
 
 // =====================================================
@@ -1142,8 +1143,12 @@ function renderPlayerPanel(files) {
     const card = document.createElement('div');
     card.className      = 'player-card';
     card.dataset.slug   = slug;
+    const pendingCount = state.playerPendingLoot[slug] || 0;
+    const pendingBadge = pendingCount > 0
+      ? `<span class="player-card-pending-badge" id="pending-${escapeHtml(slug)}" title="${pendingCount} pending personal loot card${pendingCount === 1 ? '' : 's'}">!</span>`
+      : '';
     card.innerHTML = `
-      <div class="player-card-name" title="${escapeHtml(fm.name || '')}">${escapeHtml(fm.name || filenameLabel(pf.path))}</div>
+      <div class="player-card-name" title="${escapeHtml(fm.name || '')}">${escapeHtml(fm.name || filenameLabel(pf.path))}${pendingBadge}</div>
       ${fm.player ? `<div class="player-card-player">(${escapeHtml(fm.player)})</div>` : ''}
       <div class="player-card-stats">
         <div class="stat-block"><span class="stat-label">MIG</span><span class="stat-value">${escapeHtml(String(fm.might   || '–'))}</span></div>
@@ -1275,19 +1280,37 @@ function updatePlayerHpDisplay() {
     }
   }
 
-  // Show/hide approve buttons for pending rest requests
+  // Show/hide approve buttons for pending rest requests + pending-loot badges
   for (const pf of state.playerFiles) {
     const slug    = pf.path.split('/players/')[1]?.split('/')[0] || '';
     const restReq = state.playerRestRequests[slug];
     const btn     = document.getElementById(`rest-approve-${slug}`);
-    if (!btn) continue;
-    if (restReq && restReq.status === 'pending') {
-      const label = restReq.type === 'short' ? 'Short Rest' : 'Long Rest';
-      btn.textContent    = `Approve ${label}`;
-      btn.style.display  = '';
-    } else {
-      btn.style.display  = 'none';
+    if (btn) {
+      if (restReq && restReq.status === 'pending') {
+        const label = restReq.type === 'short' ? 'Short Rest' : 'Long Rest';
+        btn.textContent    = `Approve ${label}`;
+        btn.style.display  = '';
+      } else {
+        btn.style.display  = 'none';
+      }
     }
+
+    // Pending personal-loot badge — appears on the card name line
+    const pendingCount = state.playerPendingLoot[slug] || 0;
+    const badge = document.getElementById(`pending-${slug}`);
+    if (badge) {
+      // Update existing badge
+      if (pendingCount > 0) {
+        badge.title = `${pendingCount} pending personal loot card${pendingCount === 1 ? '' : 's'}`;
+        badge.style.display = '';
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+    // If the badge wasn't rendered initially but loot has arrived since,
+    // we'd need to inject one. For simplicity (badges appear on a render
+    // pass), the next renderPlayerPanel call will pick it up. Forcing one
+    // here would risk duplicating other dynamic UI bits.
   }
 }
 
@@ -1326,10 +1349,13 @@ function subscribePlayerHp(campaignId) {
     const btn = document.getElementById('btn-session-toggle');
     if (btn) btn.textContent = state.sessionActive ? 'End Session' : 'Start Session';
 
-    // data.session is { [slug]: { hp_current: N, rest_request: {...}, ... } }
+    // data.session is { [slug]: { hp_current: N, rest_request: {...}, pending_personal_loot: {...}, ... } }
+    const prevPending = JSON.stringify(state.playerPendingLoot);
+
     state.playerHpLive       = {};
     state.playerSlotsLive    = {};
     state.playerRestRequests = {};
+    state.playerPendingLoot  = {};
     for (const [slug, playerData] of Object.entries(data.session || {})) {
       if (typeof playerData?.hp_current === 'number') {
         state.playerHpLive[slug] = playerData.hp_current;
@@ -1347,8 +1373,20 @@ function subscribePlayerHp(campaignId) {
           approveRestRequest(slug);
         }
       }
+      const pending = playerData?.pending_personal_loot;
+      if (pending && typeof pending === 'object') {
+        const count = Object.keys(pending).length;
+        if (count > 0) state.playerPendingLoot[slug] = count;
+      }
     }
-    updatePlayerHpDisplay();
+
+    // If pending-loot counts changed between updates, do a full panel re-render
+    // so badges appear/disappear cleanly. Otherwise just patch the live values.
+    if (JSON.stringify(state.playerPendingLoot) !== prevPending) {
+      renderPlayerPanel(state.files);
+    } else {
+      updatePlayerHpDisplay();
+    }
   });
 }
 
@@ -2060,13 +2098,30 @@ async function loadLootLibrary() {
 // =====================================================
 
 /**
- * Opens the Distribute Loot modal, loads the card library if needed,
- * and renders the search UI.
+ * Opens the loot modal in the requested mode.
+ *   'group'    → all staged cards go to the group claim screen; per-row
+ *                dropdown is suppressed (everything is implicitly group).
+ *   'personal' → each staged card must be assigned to a specific player;
+ *                the per-row dropdown lists players only (no Group option).
+ *
+ * Group and Personal must NEVER run concurrently — the DM uses one button at
+ * a time, and the player UI is built around one active loot session per
+ * campaign.
+ *
+ * @param {'group'|'personal'} mode
  */
-async function openLootModal() {
-  const modal = document.getElementById('loot-modal');
-  modal.style.display = '';
+async function openLootModal(mode) {
+  state.lootMode   = mode;
   state.lootStaged = [];
+
+  const modal = document.getElementById('loot-modal');
+  const title = document.getElementById('loot-modal-title');
+  const give  = document.getElementById('btn-give-loot');
+
+  title.textContent = mode === 'personal' ? 'Personal Loot' : 'Group Loot';
+  give.textContent  = mode === 'personal' ? 'Send Personal Loot' : 'Send Group Loot';
+
+  modal.style.display = '';
   renderLootStaged();
   document.getElementById('loot-search-input').value  = '';
   document.getElementById('loot-filter-type').value   = '';
@@ -2139,18 +2194,34 @@ function renderLootSearchResults() {
 
 /**
  * Adds a card from the library to the staged loot list.
- * Initialises its assignment to 'group'.
+ *   Group mode → assignTo: 'group'.
+ *   Personal mode → assignTo defaults to the first player slug (DM picks per
+ *   card via dropdown; first-available-default is just so the row is valid).
  *
  * @param {{ path: string, fm: object }} card
  */
 function stageLootCard(card) {
-  state.lootStaged.push({ path: card.path, fm: card.fm, assignTo: 'group' });
+  let assignTo;
+  if (state.lootMode === 'personal') {
+    const firstPlayer = state.playerFiles[0];
+    assignTo = firstPlayer
+      ? (firstPlayer.path.split('/players/')[1]?.split('/')[0] || '')
+      : '';
+  } else {
+    assignTo = 'group';
+  }
+  state.lootStaged.push({ path: card.path, fm: card.fm, assignTo });
   renderLootStaged();
 }
 
 /**
  * Rebuilds the staged loot list UI.
- * Each row shows the card name and a dropdown to assign it to a player or Group Decision.
+ *
+ * In Group mode every card is implicitly going to the group, so each row
+ * shows a static "Group" label instead of a dropdown.
+ *
+ * In Personal mode each row has a player dropdown and the DM must pick a
+ * recipient per card. The label "Group Decision" is not offered.
  */
 function renderLootStaged() {
   const section = document.getElementById('loot-staged-section');
@@ -2178,23 +2249,27 @@ function renderLootStaged() {
     const row = document.createElement('div');
     row.className = 'loot-staged-row';
 
-    const playerOptsHtml = playerOptions.map(p =>
-      `<option value="${escapeHtml(p.slug)}" ${item.assignTo === p.slug ? 'selected' : ''}>${escapeHtml(p.name)}</option>`
-    ).join('');
+    let assignControl;
+    if (state.lootMode === 'personal') {
+      const playerOptsHtml = playerOptions.map(p =>
+        `<option value="${escapeHtml(p.slug)}" ${item.assignTo === p.slug ? 'selected' : ''}>${escapeHtml(p.name)}</option>`
+      ).join('');
+      assignControl = `<select class="loot-assign-select" data-idx="${idx}">${playerOptsHtml}</select>`;
+    } else {
+      // Group mode — static label, no choice
+      assignControl = `<span class="loot-staged-assign-label">Group</span>`;
+    }
 
     row.innerHTML = `
       <span class="loot-staged-type">${escapeHtml(item.fm.card_type || '')}</span>
       <span class="loot-staged-name">${escapeHtml(item.fm.name || '')}</span>
-      <select class="loot-assign-select" data-idx="${idx}">
-        <option value="group" ${item.assignTo === 'group' ? 'selected' : ''}>Group Decision</option>
-        ${playerOptsHtml}
-      </select>
+      ${assignControl}
       <button class="btn btn-danger btn-xs loot-staged-remove" data-idx="${idx}" title="Remove">&times;</button>
     `;
     list.appendChild(row);
   });
 
-  // Wire assignment dropdowns
+  // Wire assignment dropdowns (personal mode only)
   list.querySelectorAll('.loot-assign-select').forEach(sel => {
     sel.addEventListener('change', (e) => {
       const idx = parseInt(e.target.dataset.idx);
@@ -2217,10 +2292,17 @@ function renderLootStaged() {
 // =====================================================
 
 /**
- * Main entry point when the DM clicks "Give Loot".
- * Writes the full loot session to Firebase then closes the modal.
- * The actual delivery is handled by the player app listening to Firebase.
- * After all player-direct cards are dealt with, the group loot phase begins.
+ * Main entry point when the DM clicks "Send Group Loot" / "Send Personal Loot".
+ *
+ * Group: writes a single shared loot session at firebaseLootPath. All players
+ * see the unified Group Loot screen until everyone is Ready and someone hits
+ * Finalise.
+ *
+ * Personal: writes one pending-loot entry per player into their session
+ * subtree (firebaseCampaignPath/session/{slug}/pending_personal_loot/{key}).
+ * Each player only sees the cards intended for them. Other players are
+ * unaware anything happened. The player app's pending-personal-loot
+ * subscriber drives the receive overlay.
  */
 async function giveLoot() {
   if (state.lootStaged.length === 0) return;
@@ -2228,44 +2310,143 @@ async function giveLoot() {
     alert('No active campaign.');
     return;
   }
+  if (state.lootMode === 'personal' &&
+      state.lootStaged.some(s => !s.assignTo)) {
+    alert('All personal loot cards must be assigned to a player.');
+    return;
+  }
 
   const btn = document.getElementById('btn-give-loot');
-  btn.disabled      = true;
-  btn.textContent   = 'Sending…';
+  btn.disabled    = true;
+  btn.textContent = 'Sending…';
 
   try {
-    // Build the loot session object for Firebase
-    // Each card gets a unique key, assigned player (or 'group'), and claim state.
-    const lootSession = {
-      createdAt:   Date.now(),
-      phase:       'player',   // 'player' then 'group'
-      cards:       {},
-    };
-
-    state.lootStaged.forEach((item, idx) => {
-      const key = `card_${idx}`;
-      lootSession.cards[key] = {
-        cardPath:     item.path,
-        name:         item.fm.name || '',
-        card_type:    item.fm.card_type || '',
-        slots:        item.fm.slots || 'hand',   // native "must be in" slot type
-        generation:   item.fm.generation || 1,
-        assignTo:     item.assignTo,              // player slug or 'group'
-        claimedBy:    null,                       // set when a player claims it
-        claimLocked:  false,                      // set to true during a claim transaction
-        resolvedAt:   null,                       // timestamp when fully resolved
-      };
-    });
-
-    await set(ref(_db, firebaseLootPath(state.activeCampaign.id)), lootSession);
-
+    if (state.lootMode === 'group') {
+      await sendGroupLoot();
+    } else {
+      await sendPersonalLoot();
+    }
     closeLootModal();
-    openDmLootObserver();
+    if (state.lootMode === 'group') openDmLootObserver();
   } catch (e) {
     alert('Failed to send loot: ' + e.message);
     btn.disabled    = false;
-    btn.textContent = 'Give Loot';
+    btn.textContent = state.lootMode === 'personal'
+      ? 'Send Personal Loot'
+      : 'Send Group Loot';
   }
+}
+
+/**
+ * Writes the staged loot to the campaign's group loot session in Firebase.
+ *
+ * Each card lands in `loot/cards/{key}` keyed by the DM-side index, with
+ * `assignTo: 'group'` and the rest of the card metadata. The shared mode
+ * field signals the player app to open the unified Group Loot screen.
+ */
+async function sendGroupLoot() {
+  const lootSession = {
+    createdAt: Date.now(),
+    mode:      'group',
+    phase:     'claim',     // 'claim' → players grab from the strip;
+                            // 'trade' → resolve Holding zones + discards
+    cards:     {},
+    // playerStates is filled in by the player app as players Ready up
+  };
+
+  state.lootStaged.forEach((item, idx) => {
+    const key = `card_${idx}`;
+    lootSession.cards[key] = {
+      cardPath:   item.path,
+      name:       item.fm.name      || '',
+      card_type:  item.fm.card_type || '',
+      slots:      item.fm.slots     || 'hand',
+      generation: item.fm.generation || 1,
+      assignTo:   'group',
+      claimedBy:  null,
+      resolvedAt: null,
+    };
+  });
+
+  await set(ref(_db, firebaseLootPath(state.activeCampaign.id)), lootSession);
+}
+
+/**
+ * On session end, copies each player's pending_personal_loot Firebase entries
+ * into their character .md frontmatter so the loot survives the session
+ * being inactive. The player app's character-load hook rehydrates from
+ * frontmatter back into Firebase next time they log in.
+ *
+ * Idempotent: if a player has nothing pending, nothing happens.
+ * Best-effort: failures for one player don't block the rest.
+ */
+async function flushPendingPersonalLootToGitHub() {
+  if (!state.activeCampaign) return;
+
+  const sessionRef = ref(_db, `${firebaseCampaignPath(state.activeCampaign.id)}/session`);
+  const snap       = await get(sessionRef);
+  const session    = snap.val() || {};
+
+  const flushes = Object.entries(session).map(async ([slug, playerData]) => {
+    const pending = playerData?.pending_personal_loot;
+    if (!pending) return;
+
+    const entries = Object.values(pending);
+    if (entries.length === 0) return;
+
+    // Find this player's character file
+    const pf = state.playerFiles.find(f => {
+      const s = f.path.split('/players/')[1]?.split('/')[0] || '';
+      return s === slug;
+    });
+    if (!pf) return;
+
+    try {
+      const { content, sha } = await readFile(pf.path);
+      const fm = parseFrontmatter(content);
+      const existing = Array.isArray(fm.pending_personal_loot) ? fm.pending_personal_loot : [];
+      // Merge: append new entries, dedup is not strict — if the player already
+      // has identical pending entries from a prior crash, that's fine.
+      fm.pending_personal_loot = [...existing, ...entries];
+      await writeFile(pf.path, serialiseFrontmatter(fm),
+        `Flush pending personal loot for ${slug} on session end`, sha);
+      // Clear the Firebase node so it doesn't reappear when the session
+      // restarts (rehydrate will re-push it).
+      await set(ref(_db,
+        `${firebaseCampaignPath(state.activeCampaign.id)}/session/${slug}/pending_personal_loot`), null);
+    } catch (e) {
+      console.warn(`Failed to flush pending personal loot for ${slug}:`, e);
+    }
+  });
+
+  await Promise.all(flushes);
+}
+
+/**
+ * Writes one pending-loot entry per staged card under the recipient player's
+ * Firebase session subtree. Each player's app subscribes to its own
+ * `pending_personal_loot` node and shows the receive overlay accordingly.
+ *
+ * Multiple personal-loot drops accumulate — pending entries stay until the
+ * player handles them (or the session ends and they get flushed to GitHub).
+ */
+async function sendPersonalLoot() {
+  const writes = state.lootStaged.map(async (item) => {
+    const slug = item.assignTo;
+    const pendingRef = ref(_db,
+      `${firebaseCampaignPath(state.activeCampaign.id)}/session/${slug}/pending_personal_loot`);
+    const newEntryRef = push(pendingRef);
+    return set(newEntryRef, {
+      cardPath:   item.path,
+      name:       item.fm.name      || '',
+      card_type:  item.fm.card_type || '',
+      slots:      item.fm.slots     || 'hand',
+      generation: item.fm.generation || 1,
+      sentAt:     Date.now(),
+    });
+  });
+
+  await Promise.all(writes);
 }
 
 // =====================================================
@@ -2296,15 +2477,16 @@ function openDmLootObserver() {
 function closeDmLootObserver() {
   document.getElementById('dm-loot-observer').style.display = 'none';
   if (state._lootFbUnsub) { state._lootFbUnsub(); state._lootFbUnsub = null; }
-  if (_dmLootResolvedTimer) { clearInterval(_dmLootResolvedTimer); _dmLootResolvedTimer = null; }
-  // Remove the early-close button so it doesn't linger if the overlay reopens
-  const earlyClose = document.querySelector('.btn-dm-loot-close-early');
-  if (earlyClose) earlyClose.remove();
 }
 
 /**
- * Renders the DM observer card list showing claim status of all loot cards.
- * When all cards are resolved, shows a 5-second countdown then auto-closes.
+ * Renders the DM observer:
+ *   - Phase label (Claim / Trade)
+ *   - Per-card claim status
+ *   - Per-player Ready summary
+ *
+ * The session auto-closes when the players' Finalise transaction removes the
+ * Firebase node — there's no resolved-message countdown anymore.
  *
  * @param {object} session - The Firebase loot session object
  */
@@ -2312,21 +2494,20 @@ function renderDmObserverCards(session) {
   const container = document.getElementById('dm-observer-cards');
   container.innerHTML = '';
 
+  // Phase header
+  const phase = session.phase || 'claim';
+  const phaseEl = document.createElement('div');
+  phaseEl.className = 'dm-observer-phase';
+  phaseEl.textContent = phase === 'trade' ? 'Phase: Trade' : 'Phase: Claim';
+  container.appendChild(phaseEl);
+
+  // Per-card status
   const cards = Object.entries(session.cards || {});
-  if (cards.length === 0) {
-    container.innerHTML = '<span class="loot-hint">No cards remaining.</span>';
-    return;
-  }
-
-  // Check if every card is resolved
-  const allResolved = cards.every(([, card]) => !!card.claimedBy);
-
   for (const [key, card] of cards) {
     const div = document.createElement('div');
     div.className = 'dm-observer-card-row';
 
-    let statusText = 'Pending';
-    let statusClass = 'status-pending';
+    let statusText, statusClass;
     if (card.claimedBy) {
       const pf = state.playerFiles.find(f => {
         const slug = f.path.split('/players/')[1]?.split('/')[0] || '';
@@ -2335,14 +2516,9 @@ function renderDmObserverCards(session) {
       const claimerName = pf ? pf.frontmatter.name : card.claimedBy;
       statusText  = `Claimed by ${claimerName}`;
       statusClass = 'status-claimed';
-    } else if (card.assignTo !== 'group') {
-      const pf = state.playerFiles.find(f => {
-        const slug = f.path.split('/players/')[1]?.split('/')[0] || '';
-        return slug === card.assignTo;
-      });
-      const assignedName = pf ? pf.frontmatter.name : card.assignTo;
-      statusText  = `Awaiting ${assignedName}`;
-      statusClass = 'status-assigned';
+    } else {
+      statusText  = 'Pending';
+      statusClass = 'status-pending';
     }
 
     div.innerHTML = `
@@ -2353,54 +2529,23 @@ function renderDmObserverCards(session) {
     container.appendChild(div);
   }
 
-  if (allResolved) {
-    showDmLootResolved();
-  }
-}
+  // Per-player ready summary
+  const states = session.playerStates || {};
+  const slugs  = Object.keys(states);
+  if (slugs.length > 0) {
+    const summary = document.createElement('div');
+    summary.className = 'dm-observer-ready-summary';
 
-/**
- * Shows an "All loot resolved!" message in the DM observer, then auto-closes
- * after LOOT_RESOLVED_AUTOCLOSE_MS. Calling this while a countdown is already
- * running is a no-op.
- */
-let _dmLootResolvedTimer = null;
-function showDmLootResolved() {
-  if (_dmLootResolvedTimer) return; // already counting down
-
-  const overlay   = document.getElementById('dm-loot-observer');
-  const subEl     = overlay.querySelector('.loot-observer-sub');
-  const abandonBtn = document.getElementById('btn-dm-abandon-loot');
-
-  const totalSecs = Math.round(LOOT_RESOLVED_AUTOCLOSE_MS / 1000);
-  if (subEl) subEl.textContent = `All loot resolved! Closing in ${totalSecs}s…`;
-  if (abandonBtn) abandonBtn.style.display = 'none';
-
-  // Add an early-close button if not already present
-  const footer = overlay.querySelector('.loot-modal-footer');
-  if (footer && !footer.querySelector('.btn-dm-loot-close-early')) {
-    const earlyClose = document.createElement('button');
-    earlyClose.className   = 'btn btn-secondary btn-sm btn-dm-loot-close-early';
-    earlyClose.textContent = 'Close';
-    earlyClose.addEventListener('click', () => {
-      clearInterval(_dmLootResolvedTimer);
-      _dmLootResolvedTimer = null;
-      closeDmLootObserver();
-      remove(ref(_db, firebaseLootPath(state.activeCampaign.id))).catch(() => {});
-    });
-    footer.appendChild(earlyClose);
-  }
-
-  let secs = totalSecs;
-  _dmLootResolvedTimer = setInterval(() => {
-    secs--;
-    if (subEl) subEl.textContent = secs > 0 ? `All loot resolved! Closing in ${secs}s…` : '';
-    if (secs <= 0) {
-      clearInterval(_dmLootResolvedTimer);
-      _dmLootResolvedTimer = null;
-      closeDmLootObserver();
-      remove(ref(_db, firebaseLootPath(state.activeCampaign.id))).catch(() => {});
+    for (const slug of slugs) {
+      const ready    = !!states[slug].ready;
+      const holding  = Object.keys(states[slug].holding || {}).length;
+      const pill     = document.createElement('span');
+      pill.className = 'dm-observer-ready-pill' + (ready ? ' is-ready' : '');
+      pill.textContent = `${slug}${ready ? ' ✓' : ''}${holding > 0 ? ` (holding ${holding})` : ''}`;
+      summary.appendChild(pill);
     }
-  }, 1000);
+    container.appendChild(summary);
+  }
 }
 
 /**
@@ -2548,8 +2693,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (confirm('Clear all HP trackers?')) clearAllHp();
   });
 
-  // Distribute Loot button
-  document.getElementById('btn-distribute-loot').addEventListener('click', openLootModal);
+  // Loot buttons — Group and Personal each open the same modal in their own mode
+  document.getElementById('btn-group-loot').addEventListener('click',
+    () => openLootModal('group'));
+  document.getElementById('btn-personal-loot').addEventListener('click',
+    () => openLootModal('personal'));
 
   // Loot modal: close / cancel
   document.getElementById('btn-loot-modal-close').addEventListener('click', closeLootModal);
@@ -2593,6 +2741,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const label    = newState ? 'start' : 'end';
     if (!confirm(`Are you sure you want to ${label} the session?`)) return;
     try {
+      // When ending: flush any unhandled pending_personal_loot to GitHub
+      // frontmatter so it survives until the next session.
+      if (!newState) {
+        await flushPendingPersonalLootToGitHub();
+      }
       await set(ref(_db, `${firebaseCampaignPath(state.activeCampaign.id)}/session_active`), newState);
     } catch (e) {
       alert('Could not update session state: ' + e.message);

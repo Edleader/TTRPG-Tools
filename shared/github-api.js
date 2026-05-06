@@ -348,14 +348,58 @@ export function serialiseFrontmatter(frontmatter) {
   const body = frontmatter._body || '';
   const keys = Object.keys(frontmatter).filter(k => k !== '_body');
 
-  const yamlLines = keys.map(k => {
-    const v = frontmatter[k];
-    if (v === null || v === undefined) return `${k}:`;
-    if (typeof v === 'boolean') return `${k}: ${v}`;
-    if (typeof v === 'number')  return `${k}: ${v}`;
-    const needsQuotes = typeof v === 'string' && (v.includes(':') || v.includes('#'));
-    return needsQuotes ? `${k}: "${v}"` : `${k}: ${v}`;
-  });
+  const yamlLines = keys.map(k => serialiseYamlEntry(k, frontmatter[k], 0));
 
   return `---\n${yamlLines.join('\n')}\n---\n\n${body}`;
+}
+
+/**
+ * Serialises a single YAML entry (key + value) at the given indent.
+ * Handles scalars, arrays of scalars, and arrays of mappings (used for
+ * structured frontmatter like pending_personal_loot).
+ *
+ * @param {string} key
+ * @param {*}      value
+ * @param {number} indent - Number of spaces of indentation for this entry
+ * @returns {string} YAML lines joined with '\n'
+ */
+function serialiseYamlEntry(key, value, indent) {
+  const pad = ' '.repeat(indent);
+
+  if (value === null || value === undefined) return `${pad}${key}:`;
+  if (typeof value === 'boolean')             return `${pad}${key}: ${value}`;
+  if (typeof value === 'number')               return `${pad}${key}: ${value}`;
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) return `${pad}${key}: []`;
+    // Array of objects → block sequence with nested mappings
+    if (value.every(v => v && typeof v === 'object' && !Array.isArray(v))) {
+      const items = value.map(item => {
+        const subKeys = Object.keys(item);
+        if (subKeys.length === 0) return `${pad}  -`;
+        const lines = subKeys.map((sk, i) => {
+          const sv = item[sk];
+          // First subkey sits next to the dash; rest indent under it
+          const prefix = i === 0 ? `${pad}  - ` : `${pad}    `;
+          if (sv === null || sv === undefined) return `${prefix}${sk}:`;
+          if (typeof sv === 'boolean' || typeof sv === 'number') return `${prefix}${sk}: ${sv}`;
+          const needsQ = typeof sv === 'string' && (sv.includes(':') || sv.includes('#'));
+          return needsQ ? `${prefix}${sk}: "${sv}"` : `${prefix}${sk}: ${sv}`;
+        });
+        return lines.join('\n');
+      });
+      return `${pad}${key}:\n${items.join('\n')}`;
+    }
+    // Array of scalars → block sequence
+    const lines = value.map(v => `${pad}  - ${v}`);
+    return `${pad}${key}:\n${lines.join('\n')}`;
+  }
+
+  if (typeof value === 'string') {
+    const needsQuotes = value.includes(':') || value.includes('#');
+    return needsQuotes ? `${pad}${key}: "${value}"` : `${pad}${key}: ${value}`;
+  }
+
+  // Fallback for unexpected types
+  return `${pad}${key}: ${String(value)}`;
 }

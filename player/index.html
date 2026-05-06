@@ -169,7 +169,9 @@
 
     <!-- ── REST BUTTONS ───────────────────────────── -->
     <section class="sheet-section rest-section">
-      <button class="btn btn-rest btn-arrange-rest" id="btn-arrange-cards" disabled>Arrange Cards</button>
+      <button class="btn btn-rest btn-arrange-rest" id="btn-arrange-cards" disabled>
+        Arrange Cards<span class="btn-badge" id="arrange-badge" style="display:none">!</span>
+      </button>
       <button class="btn btn-rest btn-arrange-rest" id="btn-trade-cards" disabled>Trade Cards</button>
       <button class="btn btn-rest" id="btn-short-rest">Short Rest</button>
       <button class="btn btn-rest btn-long-rest" id="btn-long-rest">Long Rest</button>
@@ -267,7 +269,6 @@
 
       <div class="arrange-header">
         <span class="arrange-title" id="arrange-title">Arrange Cards</span>
-        <button class="btn btn-secondary btn-sm" id="btn-loot-send-to-group" style="display:none">Send to Group</button>
       </div>
 
       <div class="arrange-body">
@@ -307,9 +308,11 @@
   </div>
 
   <!-- ── TRADE CARDS OVERLAY ──────────────────────────────
-       Two sections:
-         TOP: Others' Offers — cards other players have put up
-         BOTTOM: Your Cards (hand+active) | Your Offer zone
+       TOP: Others' Offers — cards other players have put up
+       BOTTOM-LEFT: Your Cards (split: Active / Hand)
+       BOTTOM-RIGHT: Your Offer zone
+       Cards can be reordered between Active/Hand inside the trade overlay;
+       changes are persisted on Close.
        ─────────────────────────────────────────────── -->
   <div id="trade-overlay" class="arrange-overlay" style="display:none" role="dialog" aria-modal="true" aria-label="Trade cards">
     <div class="arrange-dialog trade-dialog">
@@ -334,9 +337,11 @@
         <div class="trade-bottom">
 
           <div class="arrange-col trade-col-yours">
-            <div class="arrange-col-header">Your Cards</div>
-            <p class="arrange-discard-hint">Drag a card to Your Offer to put it up for trade.</p>
-            <div class="arrange-drop-zone" id="trade-yours-zone" data-zone="yours"></div>
+            <div class="arrange-col-header" id="trade-active-header">Active Slots</div>
+            <div class="arrange-drop-zone" id="trade-active-zone" data-zone="trade-active"></div>
+            <div class="arrange-col-header arrange-col-header-hand" id="trade-hand-header">Hand</div>
+            <div class="arrange-drop-zone" id="trade-hand-zone" data-zone="trade-hand"></div>
+            <div class="arrange-validation" id="trade-validation" style="display:none"></div>
           </div>
 
           <div class="arrange-col trade-col-offer">
@@ -356,19 +361,86 @@
     </div>
   </div>
 
-  <!-- ── GROUP LOOT SCREEN ─────────────────────────────
-       Shown to all players at once for group decisions.
-       Cards displayed horizontally, claim button locked 10s.
+  <!-- ── PERSONAL LOOT NOTIFICATION ─────────────────────
+       Shown only to the recipient. Two variants based on space:
+         - Have space → "OK" delivers the card silently.
+         - No space  → "OK" closes the overlay, sets a badge on the
+           Arrange button, and waits for the player to make space.
        ─────────────────────────────────────────────── -->
-  <div id="group-loot-overlay" class="loot-notify-overlay" style="display:none" role="dialog" aria-modal="true" aria-label="Group loot">
-    <div class="group-loot-card">
-      <div class="loot-notify-title" id="group-loot-title">Group Loot</div>
-      <p class="group-loot-sub" id="group-loot-sub">Your group has loot to claim. Work together to decide who takes what.</p>
-      <div id="group-loot-cards" class="group-loot-cards"></div>
-      <div class="group-loot-actions">
-        <button class="btn btn-danger btn-sm" id="btn-group-abandon">Abandon Remaining Loot</button>
-        <button class="btn btn-secondary btn-sm" id="btn-group-loot-close" style="display:none">Close</button>
+  <div id="personal-loot-overlay" class="loot-notify-overlay" style="display:none" role="dialog" aria-modal="true" aria-label="Personal loot received">
+    <div class="personal-loot-card">
+      <div class="loot-notify-title">Personal Loot</div>
+      <p class="personal-loot-sub" id="personal-loot-sub">
+        The GM has given this to you specifically — other players can't see it.
+      </p>
+      <div id="personal-loot-cards" class="personal-loot-cards"></div>
+      <p class="personal-loot-no-space" id="personal-loot-no-space" style="display:none">
+        You don't have space right now. Click OK to acknowledge — the
+        Arrange Cards button will show a reminder until you make room.
+      </p>
+      <div class="personal-loot-actions">
+        <button class="btn btn-sm" id="btn-personal-loot-ok">OK</button>
       </div>
+    </div>
+  </div>
+
+  <!-- ── GROUP LOOT SCREEN — UNIFIED ─────────────────────
+       Single overlay shared by all players when a group loot session is
+       active. Three regions:
+         TOP STRIP: claimable group cards (Phase 1) or holding-pool cards
+                    being traded (Phase 3). Hover any card for tooltip.
+         WORKING AREA: this player's Active / Hand / Incoming / Holding
+                       zones — drag freely between them.
+         FOOTER: Ready toggle + Finalise button (active only when all
+                 players are Ready and Holding is empty across the room).
+       ─────────────────────────────────────────────── -->
+  <div id="group-loot-overlay" class="group-loot-overlay" style="display:none" role="dialog" aria-modal="true" aria-label="Group loot">
+    <div class="group-loot-dialog">
+
+      <div class="group-loot-header">
+        <span class="group-loot-title" id="group-loot-title">Group Loot</span>
+        <span class="group-loot-phase-label" id="group-loot-phase-label">Claim Phase</span>
+      </div>
+
+      <!-- Claimable strip (Phase 1) / Holding-trade strip (Phase 3) -->
+      <div class="group-loot-strip-wrap">
+        <div class="group-loot-strip-label" id="group-loot-strip-label">Claim cards from left to right</div>
+        <div class="group-loot-strip" id="group-loot-strip"></div>
+      </div>
+
+      <div class="group-loot-divider"></div>
+
+      <!-- Working area for THIS player -->
+      <div class="group-loot-work">
+
+        <div class="arrange-col group-loot-col">
+          <div class="arrange-col-header" id="gl-active-header">Active Slots</div>
+          <div class="arrange-drop-zone" id="gl-active-zone" data-zone="gl-active"></div>
+          <div class="arrange-col-header arrange-col-header-hand" id="gl-hand-header">Hand</div>
+          <div class="arrange-drop-zone" id="gl-hand-zone" data-zone="gl-hand"></div>
+          <div class="arrange-validation" id="gl-validation" style="display:none"></div>
+        </div>
+
+        <div class="arrange-col group-loot-col">
+          <div class="arrange-col-header" id="gl-incoming-header">Incoming</div>
+          <p class="arrange-discard-hint">Cards you've claimed but haven't placed yet. Must be empty before you can hit Ready.</p>
+          <div class="arrange-drop-zone" id="gl-incoming-zone" data-zone="gl-incoming"></div>
+
+          <div class="arrange-col-header arrange-col-header-hand" id="gl-holding-header">Holding</div>
+          <p class="arrange-discard-hint" id="gl-holding-hint">Cards you'd rather trade away than keep. They become claimable by other players in the trade phase.</p>
+          <div class="arrange-drop-zone" id="gl-holding-zone" data-zone="gl-holding"></div>
+        </div>
+
+      </div>
+
+      <!-- Per-player ready summary -->
+      <div class="group-loot-ready-summary" id="group-loot-ready-summary"></div>
+
+      <div class="group-loot-footer">
+        <button class="btn btn-secondary btn-sm" id="btn-gl-ready">Ready</button>
+        <button class="btn btn-sm" id="btn-gl-finalise" disabled>Finalise</button>
+      </div>
+
     </div>
   </div>
 

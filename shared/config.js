@@ -167,18 +167,6 @@ export const BASE_MOVEMENT_METRES = 14;
 // ─── UI timing ────────────────────────────────────────────────────────────────
 
 /**
- * How long the group-loot Claim button stays disabled after the overlay opens.
- * Stops accidental fast-tap claims and gives the group a moment to discuss.
- */
-export const GROUP_LOOT_LOCK_MS = 3000;
-
-/**
- * How long the "All loot resolved!" message displays before auto-closing the
- * overlay. Used by both the player overlay and the DM observer.
- */
-export const LOOT_RESOLVED_AUTOCLOSE_MS = 5000;
-
-/**
  * How long a transient validation message stays visible in the arrange overlay
  * (e.g. after an illegal drop) before it's hidden again.
  */
