@@ -17,13 +17,6 @@ perk_10:
 perk_17: 
 hp_current: 28
 spell_slots_spent: 0
-pending_personal_loot:
-  - cardPath: campaigns/campaign-01/cards/armour/reinforced-cargo-pants.md
-    card_type: armour
-    generation: 1
-    name: Reinforced Cargo Pants
-    sentAt: 1778136915762
-    slots: active
 ---
 
 # Big Donny T (Matt)
