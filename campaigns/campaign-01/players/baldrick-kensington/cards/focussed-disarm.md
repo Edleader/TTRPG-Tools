@@ -2,7 +2,7 @@
 name: Focussed Disarm
 card_type: ability
 slots: active
-player_slot: active
+player_slot: hand
 generation: 1
 ---
 
