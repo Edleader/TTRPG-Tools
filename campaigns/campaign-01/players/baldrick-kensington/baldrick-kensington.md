@@ -16,10 +16,10 @@ perk_5:
 perk_10: 
 perk_17: 
 card_order:
-  - campaigns/campaign-01/players/baldrick-kensington/cards/taunt.md
-  - campaigns/campaign-01/players/baldrick-kensington/cards/kitchen-knife.md
   - campaigns/campaign-01/players/baldrick-kensington/cards/lock-picks.md
-  - campaigns/campaign-01/cards/abilities/focussed-disarm.md
+  - campaigns/campaign-01/players/baldrick-kensington/cards/kitchen-knife.md
+  - campaigns/campaign-01/players/baldrick-kensington/cards/taunt.md
+  - campaigns/campaign-01/players/baldrick-kensington/cards/focussed-disarm.md
 cardPath: campaigns/campaign-01/cards/abilities/hold-the-line.md
 card_type: ability
 generation: 1
