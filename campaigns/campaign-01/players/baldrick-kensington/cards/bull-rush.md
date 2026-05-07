@@ -1,9 +1,9 @@
 ---
-card_type: ability
 name: Bull Rush
-generation: 1
+card_type: ability
 slots: active
 player_slot: hand
+generation: 1
 ---
 
 **To play:** Primary Action
