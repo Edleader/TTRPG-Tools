@@ -3,7 +3,7 @@ card_type: ability
 name: Taunt
 generation: 1
 slots: active
-player_slot: active
+player_slot: hand
 ---
 
 **To play:** Primary Action
