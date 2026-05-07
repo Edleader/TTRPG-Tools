@@ -9,7 +9,7 @@ value: 10
 name: Kitchen Knife
 card_type: weapon
 slots: active
-player_slot: active
+player_slot: hand
 generation: 1
 ---
 
