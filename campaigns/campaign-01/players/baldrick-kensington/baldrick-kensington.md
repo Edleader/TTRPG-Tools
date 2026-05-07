@@ -24,6 +24,17 @@ card_order:
   - campaigns/campaign-01/players/baldrick-kensington/cards/bull-rush.md
   - campaigns/campaign-01/players/baldrick-kensington/cards/padded-jacket.md
   - campaigns/campaign-01/players/baldrick-kensington/cards/slingshot.md
+pending_personal_loot:
+  - _body: "**To play:** Primary Action
+
+For the next three NPC Phases, enemies cannot move past you within 2m. If they attempt to, they stop adjacent to you."
+    cardPath: campaigns/campaign-01/cards/abilities/hold-the-line.md
+    card_type: ability
+    generation: 1
+    name: Hold the Line
+    player_slot: active
+    sentAt: 1778190981764
+    slots: active
 ---
 
 # Baldrick "Ballsy" Kensington III (Ben)
