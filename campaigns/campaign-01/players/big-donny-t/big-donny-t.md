@@ -15,8 +15,8 @@ swaps_remaining: 0
 perk_5: 
 perk_10: 
 perk_17: 
-hp_current: 25
-spell_slots_spent: 1
+hp_current: 28
+spell_slots_spent: 0
 ---
 
 # Big Donny T (Matt)
