@@ -17,6 +17,12 @@ perk_10:
 perk_17: 
 hp_current: 28
 spell_slots_spent: 0
+card_order:
+  - campaigns/campaign-01/players/big-donny-t/cards/baseball-bat.md
+  - campaigns/campaign-01/players/big-donny-t/cards/leather-vest.md
+  - campaigns/campaign-01/players/big-donny-t/cards/binoculars.md
+  - campaigns/campaign-01/players/big-donny-t/cards/field-medkit.md
+  - campaigns/campaign-01/players/big-donny-t/cards/taunt.md
 ---
 
 # Big Donny T (Matt)
