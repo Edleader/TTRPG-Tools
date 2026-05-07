@@ -17,9 +17,9 @@ perk_10:
 perk_17: 
 card_order:
   - campaigns/campaign-01/players/baldrick-kensington/cards/taunt.md
-  - campaigns/campaign-01/players/baldrick-kensington/cards/hold-the-line.md
   - campaigns/campaign-01/players/baldrick-kensington/cards/time-slip.md
   - campaigns/campaign-01/players/baldrick-kensington/cards/kitchen-knife.md
+  - campaigns/campaign-01/cards/armour/reinforced-cargo-pants.md
   - campaigns/campaign-01/players/baldrick-kensington/cards/lock-picks.md
   - campaigns/campaign-01/players/baldrick-kensington/cards/bull-rush.md
   - campaigns/campaign-01/players/baldrick-kensington/cards/padded-jacket.md
