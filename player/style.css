@@ -1393,6 +1393,7 @@ html, body {
 .group-loot-strip-tile-name { font-weight: 600; color: var(--text); line-height: 1.3; }
 .group-loot-strip-tile-slot { font-size: 0.72rem; color: var(--text-sub); }
 .group-loot-strip-tile-claimer { font-size: 0.72rem; color: #4caf50; font-weight: 600; margin-top: auto; }
+.group-loot-strip-tile-owner   { font-size: 0.7rem;  color: var(--text-faint); font-style: italic; }
 
 .group-loot-strip-tile .group-claim-btn {
   margin-top: auto;
