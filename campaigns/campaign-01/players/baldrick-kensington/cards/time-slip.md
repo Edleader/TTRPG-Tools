@@ -3,7 +3,7 @@ card_type: ability
 name: Time Slip
 generation: 1
 slots: active
-player_slot: hand
+player_slot: active
 ---
 
 **To play:** Primary Action
