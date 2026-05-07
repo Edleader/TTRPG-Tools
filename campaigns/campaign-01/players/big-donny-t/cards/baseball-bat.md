@@ -9,7 +9,7 @@ value: 15
 name: Baseball Bat
 card_type: weapon
 slots: active
-player_slot: active
+player_slot: hand
 generation: 1
 ---
 
