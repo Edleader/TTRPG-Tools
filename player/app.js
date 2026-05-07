@@ -926,23 +926,18 @@ function subscribeTradePool() {
     _trade.community = all.filter(c => c.offeredBy !== state.characterSlug);
     _trade.offered   = all.filter(c => c.offeredBy === state.characterSlug);
 
-    // Cross-player invalidation: if one of MY offers was just claimed by
-    // someone else, my underlying inventory file was deleted. Refresh.
-    const prevByKey = new Map(prevOffered.map(c => [c.key, c]));
-    const claimedAway = _trade.offered.filter(c => {
-      const prev = prevByKey.get(c.key);
-      return c.claimedBy && c.claimedBy !== state.characterSlug
-          && prev && !prev.claimedBy;
-    });
-    // Even simpler: if I had an offer last tick that's now gone from the pool
-    // entirely (claimed + removed), my file may have been deleted — refresh.
+    // Cross-player invalidation: when the claimer fully completes a trade,
+    // they remove the trade pool entry as the LAST step (after the offerer's
+    // file has already been deleted on GitHub). Detecting "entry removed" is
+    // a more reliable signal that the offerer's inventory state has changed
+    // than "claimedBy got set" (which is set BEFORE the file delete and
+    // leads to a brief duplication flash).
     const offeredKeysNow = new Set(_trade.offered.map(c => c.key));
     const removedKeys = prevOffered
       .filter(c => !offeredKeysNow.has(c.key))
       .map(c => c.key);
-    if (claimedAway.length > 0 || removedKeys.length > 0) {
-      // Re-read inventory from GitHub so the deleted files clear out of
-      // state.inventory and disappear from every UI surface.
+    if (removedKeys.length > 0) {
+      // Re-read inventory from GitHub so the deleted files clear out.
       loadAndRenderCards().catch(e =>
         console.warn('Inventory refresh after trade-claim failed:', e));
     }
@@ -1470,13 +1465,15 @@ async function claimTradeCard(card) {
       // state.inventory in memory. Refresh the trade overlay's local view if
       // it's open so the just-claimed card appears in Your Cards immediately.
       if (isTradeOverlayOpen()) {
-        refreshTradeYoursFromInventory();
         renderTradeYoursZones();
         validateTradeYours();
       }
     } catch (e) {
-      // Delivery failed — release the claim so the offerer (or another player) can retry
-      alert('Failed to receive the traded card: ' + e.message);
+      // Delivery failed — release the claim so the offerer (or another
+      // player) can retry. Log the underlying error so we can debug repeat
+      // failures (the user-facing alert is intentionally short).
+      console.error('Trade-claim delivery failed:', e);
+      alert(`Failed to receive the traded card: ${e?.message || e}`);
       await releaseTradeClaim(card.key);
     }
   } else {
@@ -1536,20 +1533,50 @@ async function copyCardToInventory(srcPath, slug, playerSlot, cardName) {
     const baseName     = baseFilename.replace(/\.md$/, '');
     const cardsDir     = `${state.campaignPath}/players/${slug}/cards`;
 
-    let filename = baseFilename;
-    let destPath = `${cardsDir}/${filename}`;
-    try {
-      const existing = await listDirectory(cardsDir);
-      const names    = existing.map(e => e.name);
-      if (names.includes(filename)) {
-        let i = 2;
-        while (names.includes(`${baseName}-${i}.md`)) i++;
-        filename = `${baseName}-${i}.md`;
-        destPath = `${cardsDir}/${filename}`;
-      }
-    } catch (_) { /* cardsDir doesn't exist yet — first card */ }
+    /**
+     * Picks a non-colliding filename. Reads the directory listing fresh each
+     * call. Note GitHub's directory listing has a cache lag of a few seconds
+     * after a write, so this can return a stale name immediately after a
+     * prior copy — the retry loop below catches that.
+     */
+    const pickDestPath = async () => {
+      let filename = baseFilename;
+      let destPath = `${cardsDir}/${filename}`;
+      try {
+        const existing = await listDirectory(cardsDir);
+        const names    = existing.map(e => e.name);
+        if (names.includes(filename)) {
+          let i = 2;
+          while (names.includes(`${baseName}-${i}.md`)) i++;
+          filename = `${baseName}-${i}.md`;
+          destPath = `${cardsDir}/${filename}`;
+        }
+      } catch (_) { /* dir doesn't exist yet */ }
+      return destPath;
+    };
 
-    await copyFile(srcPath, destPath, `Give ${cardName} to ${slug}`, { player_slot: playerSlot });
+    // Try up to 4 times to pick a fresh name + write. If GitHub returns a
+    // collision (422 — file already exists), we suspect the listing was
+    // stale; brief pause + retry usually wins. After 4 failures, propagate
+    // the error so the caller can surface it.
+    let destPath  = null;
+    let lastErr   = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      destPath = await pickDestPath();
+      try {
+        await copyFile(srcPath, destPath, `Give ${cardName} to ${slug}`, { player_slot: playerSlot });
+        lastErr = null;
+        break;
+      } catch (e) {
+        lastErr = e;
+        const msg = String(e?.message || '');
+        // Treat "already exists" / 422 as a stale-listing collision and retry
+        // with a delay; everything else is a hard failure.
+        if (!/already exists|422/i.test(msg)) throw e;
+        await new Promise(r => setTimeout(r, 350));
+      }
+    }
+    if (lastErr) throw lastErr;
 
     // If this is THIS character, sync the in-memory inventory too.
     if (slug === state.characterSlug) {
@@ -2056,33 +2083,54 @@ function closeGroupLoot() {
 
 /**
  * Derived: cards currently displayed in the group loot Active zone.
- *   = inventory[active] - holding - discard - cards offered to holding pool by me
+ *
+ * Two sources combine here:
+ *   1. Inventory cards with player_slot 'active' — minus anything moved to
+ *      holding/discard, minus any of my offerings to the holding pool.
+ *   2. "Fresh" cards claimed from the strip that the player has dragged into
+ *      Active — those live in _gloot.incoming with _targetZone='active'.
+ *
+ * Same shape for glootHand. This way every visible position the player
+ * thinks they put a card into actually shows the card.
  */
 function glootActive() {
-  return state.inventory.filter(c =>
+  const inv = state.inventory.filter(c =>
     c._path
     && cardSlot(c) === 'active'
     && !_gloot.holdingPaths.has(c._path)
     && !_gloot.discardPaths.has(c._path)
     && !isMyHoldingPoolPath(c._path)
   );
+  const fresh = _gloot.incoming.filter(c => !c._path && c._targetZone === 'active');
+  return [...inv, ...fresh];
 }
 function glootHand() {
-  return state.inventory.filter(c =>
+  const inv = state.inventory.filter(c =>
     c._path
     && cardSlot(c) === 'hand'
     && !_gloot.holdingPaths.has(c._path)
     && !_gloot.discardPaths.has(c._path)
     && !isMyHoldingPoolPath(c._path)
   );
+  const fresh = _gloot.incoming.filter(c => !c._path && c._targetZone === 'hand');
+  return [...inv, ...fresh];
 }
-/** Cards I've dragged to Holding this session (returns full card objects). */
+/** Cards still in the Incoming holding-pen — claimed but not yet placed. */
+function glootIncomingPending() {
+  // Fresh cards WITHOUT a _targetZone (still parked in Incoming awaiting placement)
+  return _gloot.incoming.filter(c => !c._path && !c._targetZone);
+}
+/** Cards I've dragged to Holding this session (Phase 1 only). */
 function glootHolding() {
   return state.inventory.filter(c => c._path && _gloot.holdingPaths.has(c._path));
 }
-/** Cards I've dragged to Discard this session. */
+/** Cards I've dragged to Discard this session (Phase 2 only).
+ *  Includes both inventory cards (path-set membership) and fresh cards
+ *  (_targetZone === 'discard'). */
 function glootDiscard() {
-  return state.inventory.filter(c => c._path && _gloot.discardPaths.has(c._path));
+  const inv = state.inventory.filter(c => c._path && _gloot.discardPaths.has(c._path));
+  const fresh = _gloot.incoming.filter(c => !c._path && c._targetZone === 'discard');
+  return [...inv, ...fresh];
 }
 
 /**
@@ -2242,14 +2290,11 @@ function renderGroupLootZones() {
 
   const phase = (_gloot.session && _gloot.session.phase) || 'claim';
 
-  // Add Incoming claims to the count so the player can see they need to
-  // place them. We don't merge them into the rendered zone — Incoming has
-  // its own zone — but the count reflects total Active/Hand pressure.
-  const active   = glootActive();
-  const hand     = glootHand();
+  const active   = glootActive();    // includes fresh cards with _targetZone='active'
+  const hand     = glootHand();      // includes fresh cards with _targetZone='hand'
   const holding  = glootHolding();
-  const discard  = glootDiscard();
-  const incoming = _gloot.incoming;
+  const discard  = glootDiscard();   // includes fresh cards with _targetZone='discard' (Phase 2)
+  const incoming = glootIncomingPending();  // only cards still awaiting placement
 
   document.getElementById('gl-active-header').textContent =
     `Active Slots (${active.length} / ${maxActive})`;
@@ -2340,8 +2385,9 @@ function renderGroupLootReady(session) {
   // Ready button label / state
   const readyBtn = document.getElementById('btn-gl-ready');
   readyBtn.textContent = _gloot.ready ? 'Unready' : 'Ready';
-  // Block Ready while incoming has cards to place
-  readyBtn.disabled = _gloot.incoming.length > 0 && !_gloot.ready;
+  // Block Ready while there are cards still parked in Incoming (claimed
+  // but not yet placed into Active/Hand/Discard).
+  readyBtn.disabled = glootIncomingPending().length > 0 && !_gloot.ready;
 
   // Finalise button — enabled only when every known player is Ready.
   // In trade phase, leftover holdingPool entries are allowed (they return to
@@ -2614,13 +2660,13 @@ async function handleGlootDrop({ event, card, fromZone }) {
   // Apply the destination
   switch (target) {
     case 'active':
-      // Inventory cards: move via player_slot. Incoming-source cards (no _path
-      // yet — claimed but not delivered) remain in incoming until finalise.
       if (card._path) {
+        // Inventory card: just update its slot.
         inventorySetSlot(card._path, 'active');
       } else {
-        // Fresh-from-strip card moved to active — track it in incoming with a
-        // hint so finalise knows where to deliver it.
+        // Fresh-from-strip card: tag it with the zone the player wants and
+        // keep it in incoming. glootActive() includes these in its derived
+        // list, so the player sees the card in Active immediately.
         card._targetZone = 'active';
         _gloot.incoming.push(card);
       }
@@ -2634,8 +2680,9 @@ async function handleGlootDrop({ event, card, fromZone }) {
       }
       break;
     case 'incoming':
-      // Anything dragged TO incoming becomes a placement-pending card. Only
-      // makes sense for fresh-from-strip ones; ignore inventory cards.
+      // Drop into the holding pen — only meaningful for fresh cards being
+      // moved BACK from a temporary placement. Inventory cards in incoming
+      // is a no-op (they belong in active/hand).
       if (!card._path) {
         delete card._targetZone;
         _gloot.incoming.push(card);
@@ -2645,12 +2692,27 @@ async function handleGlootDrop({ event, card, fromZone }) {
       }
       break;
     case 'holding':
-      if (card._path) _gloot.holdingPaths.add(card._path);
-      // (Fresh strip cards can't be moved straight to holding — they're not
-      // ours yet. They'd need to go to active/hand first then offered.)
+      // Phase 1 — only inventory cards make sense in Holding. A freshly
+      // claimed card hasn't been incorporated into our inventory yet, so
+      // offering it back to the holding pool is structurally awkward.
+      // Silently bounce; the card stays where it was.
+      if (card._path) {
+        _gloot.holdingPaths.add(card._path);
+      } else {
+        renderGroupLoot();
+        return;
+      }
       break;
     case 'discard':
-      if (card._path) _gloot.discardPaths.add(card._path);
+      // Phase 2 — both inventory cards AND fresh-from-strip cards can go to
+      // Discard. Inventory cards get deleted at finalise; fresh cards just
+      // never get committed (their pool entry is already cleared by claim).
+      if (card._path) {
+        _gloot.discardPaths.add(card._path);
+      } else {
+        card._targetZone = 'discard';
+        _gloot.incoming.push(card);
+      }
       break;
   }
 
@@ -2701,8 +2763,9 @@ async function writeMyGroupState() {
 // ─── Group loot — Ready / Finalise ───────────────────────────────────────────
 
 async function toggleGlootReady() {
-  // Ready requires Incoming to be empty
-  if (!_gloot.ready && _gloot.incoming.length > 0) {
+  // Ready requires the Incoming holding-pen to be empty (every claimed card
+  // must be placed into Active/Hand/Discard, or in Phase 1 into Holding).
+  if (!_gloot.ready && glootIncomingPending().length > 0) {
     alert('Place every card in Incoming before you Ready up.');
     return;
   }
