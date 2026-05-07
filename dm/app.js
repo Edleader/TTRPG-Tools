@@ -29,11 +29,13 @@ import {
   serialiseFrontmatter,
   readAllMarkdownFiles,
   copyFile,
+  deleteFile,
 } from '../shared/github-api.js';
 
 import {
   FIREBASE_CONFIG,
   firebaseCampaignPath,
+  firebaseInventoryPath,
   firebaseLootPath,
 } from '../shared/config.js';
 
@@ -2314,19 +2316,316 @@ async function sendGroupLoot() {
 
   state.lootStaged.forEach((item, idx) => {
     const key = `card_${idx}`;
+    // Carry the full card payload through so a claimer can write a Firebase
+    // inventory entry directly at finalise — no GitHub round-trip mid-session.
+    const fm = item.fm || {};
     lootSession.cards[key] = {
-      cardPath:   item.path,
-      name:       item.fm.name      || '',
-      card_type:  item.fm.card_type || '',
-      slots:      item.fm.slots     || 'hand',
-      generation: item.fm.generation || 1,
-      assignTo:   'group',
-      claimedBy:  null,
-      resolvedAt: null,
+      cardPath:    item.path,
+      _body:       fm._body || '',
+      name:        fm.name      || '',
+      card_type:   fm.card_type || '',
+      slots:       fm.slots     || 'hand',
+      player_slot: fm.player_slot || fm.slots || 'hand',
+      generation:  fm.generation || 1,
+      _extra:      extractExtraFields(fm),
+      assignTo:    'group',
+      claimedBy:   null,
+      resolvedAt:  null,
     };
   });
 
   await set(ref(_db, firebaseLootPath(state.activeCampaign.id)), lootSession);
+}
+
+// =====================================================
+// SESSION INVENTORY — seed (start) / reconcile (end)
+// =====================================================
+
+/**
+ * On session start: read each player's GitHub cards/ directory and write
+ * every card's full content into Firebase inventory under a fresh push key.
+ *
+ * Each Firebase entry stores:
+ *   _path        - original repo path (used for matching at reconcile)
+ *   _body        - markdown body of the card (preserved verbatim)
+ *   ...frontmatter fields (name, card_type, slots, player_slot, etc.)
+ *
+ * Players' apps subscribe to firebaseInventoryPath and treat it as live truth
+ * for the duration of the session. Mid-session loot/trade/arrange ops mutate
+ * this Firebase node only — no GitHub writes during play.
+ *
+ * Best-effort: a failure on one player's seed doesn't block the rest.
+ */
+async function seedSessionInventoriesFromGitHub() {
+  if (!state.activeCampaign) return;
+
+  const tasks = state.playerFiles.map(async (pf) => {
+    const slug = pf.path.split('/players/')[1]?.split('/')[0] || '';
+    if (!slug) return;
+
+    // Read the player .md frontmatter so we can apply their saved card_order
+    // when seeding (so the Firebase data starts off in the same order the
+    // player last saw on their sheet).
+    let savedOrder = [];
+    try {
+      const { content } = await readFile(pf.path);
+      const playerFm = parseFrontmatter(content);
+      savedOrder = Array.isArray(playerFm.card_order) ? playerFm.card_order : [];
+    } catch (_) { /* no frontmatter or unreadable; fall back to listing order */ }
+    const orderIdx = new Map(savedOrder.map((p, i) => [p, i]));
+
+    const cardsDir = `${state.activeCampaign.path}/players/${slug}/cards`;
+    let entries = [];
+    try {
+      const list = await listDirectory(cardsDir);
+      entries = list.filter(e => e.type === 'file' && e.name.endsWith('.md'));
+    } catch (_) { /* no cards/ folder yet */ }
+
+    const reads = entries.map(async (entry) => {
+      try {
+        const { content } = await readFile(entry.path);
+        const fm = parseFrontmatter(content);
+        return {
+          _path:       entry.path,
+          _body:       fm._body || '',
+          name:        fm.name       || '',
+          card_type:   fm.card_type  || '',
+          slots:       fm.slots      || 'hand',
+          player_slot: (fm.player_slot || fm.slots || 'hand'),
+          generation:  fm.generation || 1,
+          _extra:      extractExtraFields(fm),
+          // Order: use the player's saved card_order index when present,
+          // otherwise fall back to the listing index pushed past the order
+          // range (so unsaved cards land at the end).
+          order:       orderIdx.has(entry.path) ? orderIdx.get(entry.path) : 1e9,
+        };
+      } catch (e) {
+        console.warn(`Could not seed card ${entry.path}:`, e);
+        return null;
+      }
+    });
+
+    const cards = (await Promise.all(reads)).filter(Boolean);
+
+    const block = {};
+    cards.forEach((card, idx) => {
+      block[`c${idx}`] = card;
+    });
+
+    const invRef = ref(_db, firebaseInventoryPath(state.activeCampaign.id, slug));
+    await set(invRef, block);
+  });
+
+  await Promise.all(tasks);
+}
+
+/**
+ * Returns frontmatter fields beyond the well-known set (name, card_type,
+ * slots, player_slot, generation, _body). Used to preserve cards' arbitrary
+ * fields (effect, dr, hands_required, notes, …) through the seed/reconcile
+ * round-trip.
+ */
+function extractExtraFields(fm) {
+  const known = new Set([
+    '_body', 'name', 'card_type', 'slots', 'player_slot', 'generation',
+  ]);
+  const extra = {};
+  for (const [k, v] of Object.entries(fm)) {
+    if (known.has(k)) continue;
+    if (v === undefined || v === null) continue;
+    extra[k] = v;
+  }
+  return extra;
+}
+
+/**
+ * On session end: walk each player's Firebase inventory and reconcile it
+ * back to GitHub. Steps per player:
+ *   1. Build a map of {originalPath → fbEntry} for cards that came from disk.
+ *   2. List the player's GitHub cards/ directory.
+ *   3. For each GitHub file:
+ *      - Find the matching Firebase entry by _path.
+ *      - If matched, write player_slot + extras back; consume the entry.
+ *      - If not matched, the card was traded/discarded mid-session: delete.
+ *   4. For each remaining Firebase entry (no _path → fresh during session,
+ *      or _path missing in the listing): write a brand-new file. Use the
+ *      basename from _path (or generate from name) and resolve collisions.
+ *   5. Save the per-zone card_order to the player .md frontmatter.
+ */
+async function reconcileSessionInventoriesToGitHub() {
+  if (!state.activeCampaign) return;
+
+  const tasks = state.playerFiles.map(async (pf) => {
+    const slug = pf.path.split('/players/')[1]?.split('/')[0] || '';
+    if (!slug) return;
+
+    try {
+      await reconcileSinglePlayerInventory(slug);
+    } catch (e) {
+      console.error(`Reconcile failed for ${slug}:`, e);
+    }
+  });
+
+  await Promise.all(tasks);
+}
+
+async function reconcileSinglePlayerInventory(slug) {
+  const invRef  = ref(_db, firebaseInventoryPath(state.activeCampaign.id, slug));
+  const invSnap = await get(invRef);
+  const fbEntries = invSnap.val() || {};
+  // [{ key, ...data }, ...]
+  const fbList = Object.entries(fbEntries).map(([k, v]) => ({ key: k, ...v }));
+
+  const cardsDir = `${state.activeCampaign.path}/players/${slug}/cards`;
+
+  // List existing GitHub files
+  let ghFiles = [];
+  try {
+    const list = await listDirectory(cardsDir);
+    ghFiles = list.filter(e => e.type === 'file' && e.name.endsWith('.md'));
+  } catch (_) { /* dir doesn't exist yet — first card */ }
+
+  // Build a quick lookup of FB entries by their original GitHub path
+  const fbByPath = new Map();
+  for (const e of fbList) {
+    if (e._path) fbByPath.set(e._path, e);
+  }
+
+  // 1) For each GitHub file: update or delete based on FB presence
+  for (const ghFile of ghFiles) {
+    const fb = fbByPath.get(ghFile.path);
+    if (fb) {
+      // Card still in inventory — rewrite frontmatter (player_slot might
+      // have changed, extras might be unchanged but it's cheap to rewrite).
+      await writeReconciledCard(ghFile.path, fb);
+      fbByPath.delete(ghFile.path);   // mark as consumed
+    } else {
+      // Card no longer in player's Firebase inventory — they traded it
+      // away or discarded it. Delete the file.
+      try {
+        const { sha } = await readFile(ghFile.path);
+        await deleteFile(ghFile.path, sha, `Reconcile: remove ${ghFile.name} from ${slug}`);
+      } catch (e) {
+        console.warn(`Could not delete ${ghFile.path}:`, e);
+      }
+    }
+  }
+
+  // 2) Remaining FB entries (those with _path that no longer exist on disk
+  //    OR with no _path — fresh in-session deliveries). Each gets a new file.
+  const seenNames = new Set(ghFiles.map(f => f.name));
+  for (const fb of fbList) {
+    // Skip if it was matched & rewritten in step 1
+    if (fb._path && !fbByPath.has(fb._path)) continue;
+
+    // If it had a _path but the matching file no longer exists (was deleted
+    // above), DON'T re-create — the previous loop already concluded the card
+    // was no longer wanted. fbByPath was deleted on consumption, so we get
+    // here only if the file wasn't found.
+    // Actually: fbByPath.delete is called on match. If we reach here, either
+    // (a) fb._path was set but no GH file matched, or (b) fb has no _path.
+    // In case (a) we want to recreate (the file was deleted but the card is
+    // back in inventory? unlikely). In case (b) it's a fresh card.
+    // For simplicity: write a fresh file in both cases.
+
+    let basename = fb._path
+      ? fb._path.split('/').pop()
+      : `${(fb.name || 'card').toLowerCase().replace(/[^a-z0-9]+/g, '-')}.md`;
+    let finalName = basename;
+    if (seenNames.has(finalName)) {
+      const stem = basename.replace(/\.md$/, '');
+      let i = 2;
+      while (seenNames.has(`${stem}-${i}.md`)) i++;
+      finalName = `${stem}-${i}.md`;
+    }
+    seenNames.add(finalName);
+
+    const destPath = `${cardsDir}/${finalName}`;
+    await writeReconciledCard(destPath, fb, /*creating=*/true);
+  }
+
+  // 3) Update player .md frontmatter with the card_order array
+  const orderedPaths = computeCardOrder(fbList, slug);
+  await savePlayerCardOrder(slug, orderedPaths);
+}
+
+/**
+ * Writes a single card to GitHub from its Firebase entry. Reuses the entry's
+ * _body and _extra fields plus the well-known frontmatter fields. If creating
+ * a new file, omits the sha. If updating, fetches a fresh sha first.
+ */
+async function writeReconciledCard(path, fb, creating = false) {
+  const fm = {
+    ...(fb._extra || {}),
+    name:        fb.name        || '',
+    card_type:   fb.card_type   || '',
+    slots:       fb.slots       || 'hand',
+    player_slot: fb.player_slot || fb.slots || 'hand',
+    generation:  fb.generation  || 1,
+    _body:       fb._body       || '',
+  };
+  const content = serialiseFrontmatter(fm);
+  if (creating) {
+    await writeFile(path, content, `Reconcile: create ${path.split('/').pop()}`);
+  } else {
+    const { sha } = await readFile(path);
+    await writeFile(path, content, `Reconcile: update ${path.split('/').pop()}`, sha);
+  }
+}
+
+/**
+ * Returns the list of repo paths in the order they should appear in the
+ * player's frontmatter card_order field. Reconstructs from the Firebase
+ * entries' explicit `order` field (if any), otherwise leaves as-is.
+ */
+function computeCardOrder(fbList, slug) {
+  const cardsDir = `${state.activeCampaign.path}/players/${slug}/cards`;
+  return fbList
+    .slice()
+    .sort((a, b) => (a.order ?? 1e9) - (b.order ?? 1e9))
+    .map(fb => fb._path || `${cardsDir}/${(fb.name || 'card').toLowerCase().replace(/[^a-z0-9]+/g, '-')}.md`);
+}
+
+/**
+ * Writes card_order to the player .md frontmatter. Idempotent — skips if
+ * the order hasn't changed.
+ */
+async function savePlayerCardOrder(slug, orderedPaths) {
+  const pf = state.playerFiles.find(f => {
+    const s = f.path.split('/players/')[1]?.split('/')[0] || '';
+    return s === slug;
+  });
+  if (!pf) return;
+
+  try {
+    const { content, sha } = await readFile(pf.path);
+    const fm = parseFrontmatter(content);
+    const existing = Array.isArray(fm.card_order) ? fm.card_order : [];
+    const same = existing.length === orderedPaths.length
+      && existing.every((p, i) => p === orderedPaths[i]);
+    if (same) return;
+    fm.card_order = orderedPaths;
+    await writeFile(pf.path, serialiseFrontmatter(fm),
+      `Reconcile: card order for ${slug}`, sha);
+  } catch (e) {
+    console.warn(`Could not save card order for ${slug}:`, e);
+  }
+}
+
+/**
+ * Clears the Firebase session inventory nodes for every player after
+ * reconcile completes. Called only after the GitHub writes succeed so a
+ * mid-flush failure doesn't lose any data.
+ */
+async function clearSessionInventories() {
+  if (!state.activeCampaign) return;
+  const tasks = state.playerFiles.map(async (pf) => {
+    const slug = pf.path.split('/players/')[1]?.split('/')[0] || '';
+    if (!slug) return;
+    const invRef = ref(_db, firebaseInventoryPath(state.activeCampaign.id, slug));
+    await set(invRef, null).catch(e => console.warn(`Clear inventory failed for ${slug}:`, e));
+  });
+  await Promise.all(tasks);
 }
 
 /**
@@ -2400,13 +2699,20 @@ async function sendPersonalLoot() {
     const pendingRef = ref(_db,
       `${firebaseCampaignPath(state.activeCampaign.id)}/session/${slug}/pending_personal_loot`);
     const newEntryRef = push(pendingRef);
+    const fm = item.fm || {};
+    // Carry the full card payload so the player can write a Firebase
+    // inventory entry directly when they accept it — no GitHub re-read
+    // mid-session.
     return set(newEntryRef, {
-      cardPath:   item.path,
-      name:       item.fm.name      || '',
-      card_type:  item.fm.card_type || '',
-      slots:      item.fm.slots     || 'hand',
-      generation: item.fm.generation || 1,
-      sentAt:     Date.now(),
+      cardPath:    item.path,
+      _body:       fm._body || '',
+      name:        fm.name      || '',
+      card_type:   fm.card_type || '',
+      slots:       fm.slots     || 'hand',
+      player_slot: fm.player_slot || fm.slots || 'hand',
+      generation:  fm.generation || 1,
+      _extra:      extractExtraFields(fm),
+      sentAt:      Date.now(),
     });
   });
 
@@ -2704,15 +3010,34 @@ document.addEventListener('DOMContentLoaded', () => {
     const newState = !state.sessionActive;
     const label    = newState ? 'start' : 'end';
     if (!confirm(`Are you sure you want to ${label} the session?`)) return;
+
+    const btn = document.getElementById('btn-session-toggle');
+    btn.disabled    = true;
+    btn.textContent = newState ? 'Starting…' : 'Saving…';
+
     try {
-      // When ending: flush any unhandled pending_personal_loot to GitHub
-      // frontmatter so it survives until the next session.
-      if (!newState) {
+      if (newState) {
+        // Starting: seed each player's GitHub inventory into Firebase first,
+        // THEN flip session_active. Players' apps subscribe to inventory
+        // when session_active goes true, so the data must already be there.
+        btn.textContent = 'Seeding inventories…';
+        await seedSessionInventoriesFromGitHub();
+        await set(ref(_db, `${firebaseCampaignPath(state.activeCampaign.id)}/session_active`), true);
+      } else {
+        // Ending: flip session_active first so players' apps stop writing
+        // to Firebase, then reconcile back to GitHub, flush pending loot,
+        // and clear the inventory nodes.
+        await set(ref(_db, `${firebaseCampaignPath(state.activeCampaign.id)}/session_active`), false);
+        btn.textContent = 'Reconciling…';
+        await reconcileSessionInventoriesToGitHub();
         await flushPendingPersonalLootToGitHub();
+        await clearSessionInventories();
       }
-      await set(ref(_db, `${firebaseCampaignPath(state.activeCampaign.id)}/session_active`), newState);
     } catch (e) {
       alert('Could not update session state: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      // text will be reset by the onValue handler when session_active updates
     }
   });
 

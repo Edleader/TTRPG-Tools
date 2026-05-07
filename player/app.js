@@ -26,6 +26,7 @@ import {
   FIREBASE_CONFIG,
   firebasePlayerPath,
   firebaseCampaignPath,
+  firebaseInventoryPath,
   firebaseLootPath,
   firebaseTradePath,
   HP_DEBOUNCE_MS,
@@ -75,10 +76,27 @@ const state = {
   _hpTimer: null,
 
   // Single in-memory inventory of card objects this player owns.
-  // Each card has: name, card_type, slots, _path, _sha, player_slot, etc.
-  // Mutated locally on operations (delete, add, slot-change) so every UI
-  // surface reads the same up-to-date list without re-fetching from GitHub.
+  //
+  // While the session is active this is mirrored from Firebase (the source
+  // of truth during play). Each card carries `_fbKey` — the Firebase push
+  // key under campaigns/{id}/session/{slug}/inventory/{key} — used as the
+  // write target for mutations. `_path` is preserved as a stable identifier
+  // for legacy code paths (trade entries, group loot Sets, arrange DOM
+  // ordering). Cards added mid-session that have no GitHub origin get a
+  // synthetic `_path` like "fb:{fbKey}" so the existing path-keyed flows
+  // keep working until reconcile creates a real file at session end.
+  //
+  // While the session is inactive the inventory is loaded from GitHub the
+  // old way and treated as read-only (mutations are blocked by the disabled
+  // arrange/trade/loot buttons).
   inventory: [],
+
+  // Firebase listener for our inventory node — set when session_active goes
+  // true, torn down when it goes false (or on logout).
+  _invFbUnsub: null,
+  // True once at least one Firebase inventory snapshot has applied. Used to
+  // guard the first pre-snapshot render so we don't show an empty grid.
+  _invFromFirebase: false,
 
   // Derived from inventory; rebuilt by refreshDerivedCardLists() after any
   // change. Kept around as named caches because lots of UI reads them
@@ -559,6 +577,14 @@ function renderPerks() {
  * in-memory adds the in-flight writes are about to make.
  */
 async function loadAndRenderCards() {
+  // While the session is active, Firebase is the source of truth — the
+  // subscriber populates state.inventory and re-renders. A GitHub re-read
+  // here would pull stale data and clobber the live state.
+  if (state.sessionActive && state._invFromFirebase) {
+    refreshDerivedCardLists();
+    renderInventoryUI();
+    return;
+  }
   if (_inventoryWritesInFlight > 0) {
     // In-flight writes will update memory directly; trust that.
     refreshDerivedCardLists();
@@ -638,9 +664,27 @@ function applyCardOrder(cards) {
  * (defensive — shouldn't happen during a normal session).
  */
 async function saveCardOrder() {
+  // Session-active: write `order` fields onto each FB inventory entry. The
+  // DM's reconcile reads these and sets the player's GitHub frontmatter
+  // `card_order` accordingly.
+  if (state.sessionActive) {
+    if (!state.characterSlug) return;
+    const updates = state.inventory
+      .map((c, idx) => ({ fbKey: c._fbKey, idx }))
+      .filter(u => u.fbKey);
+    for (const { fbKey, idx } of updates) {
+      try {
+        await fbInventoryUpdate(state.characterSlug, fbKey, { order: idx });
+      } catch (e) {
+        console.warn('Could not write FB order for', fbKey, e);
+      }
+    }
+    return;
+  }
+
+  // Inactive: legacy GitHub frontmatter write.
   if (!state.fm || !state.characterPath) return;
   const order = state.inventory.map(c => c._path).filter(Boolean);
-  // Skip writing if the order matches what's already persisted.
   const existing = Array.isArray(state.fm.card_order) ? state.fm.card_order : [];
   const same = existing.length === order.length
     && existing.every((p, i) => p === order[i]);
@@ -844,11 +888,25 @@ function subscribeFirebase() {
  */
 function applyCampaignSnapshot(data) {
   // Session active?
+  const wasActive = state.sessionActive;
   state.sessionActive = data.session_active === true;
   document.getElementById('session-banner').style.display =
     state.sessionActive ? 'none' : '';
   document.getElementById('btn-arrange-cards').disabled = !state.sessionActive;
   document.getElementById('btn-trade-cards').disabled   = !state.sessionActive;
+
+  // Inventory subscriber lifecycle: subscribe on session start, unsubscribe
+  // on session end. The DM seeds Firebase before flipping session_active to
+  // true, so by the time we see this transition the inventory data is ready.
+  if (state.sessionActive && !wasActive) {
+    subscribeSessionInventory();
+  } else if (!state.sessionActive && wasActive) {
+    unsubscribeSessionInventory();
+    // Reload from GitHub now that we've left Firebase-truth mode. The DM's
+    // reconcile will have already flushed our last state to GitHub.
+    loadAndRenderCards().catch(e =>
+      console.warn('Post-session inventory reload failed:', e));
+  }
 
   const playerData = (data.session || {})[state.characterSlug] || {};
 
@@ -875,6 +933,175 @@ function applyCampaignSnapshot(data) {
 
   // Group loot session (shared across all players)
   onGroupLootUpdate(data.loot || null);
+}
+
+// =====================================================
+// SESSION INVENTORY — Firebase subscriber (in-session truth)
+// =====================================================
+
+/**
+ * Subscribes to this player's Firebase inventory node. Each snapshot is
+ * mirrored into state.inventory; UI re-renders happen on every event.
+ *
+ * The DM seeds the Firebase node before flipping session_active to true,
+ * so the first snapshot we receive is already the correct starting state
+ * (originally loaded from GitHub).
+ *
+ * Multi-tab safe: state.inventory is replaced wholesale on every snapshot,
+ * so a write from another tab/device propagates back to us as a snapshot
+ * and our UI updates without a manual reload.
+ */
+function subscribeSessionInventory() {
+  if (state._invFbUnsub) state._invFbUnsub();
+  if (!state.campaignId || !state.characterSlug) return;
+
+  const invRef = ref(db,
+    firebaseInventoryPath(state.campaignId, state.characterSlug));
+
+  const handleSnapshot = (snapshot) => {
+    const data = snapshot.val() || {};
+    const cards = Object.entries(data).map(([fbKey, entry]) => {
+      const card = {
+        // Identifier carried into the legacy code paths (trade entries,
+        // group-loot Sets, arrange DOM). For cards seeded from GitHub this
+        // is the original repo path; for fresh in-session cards it's a
+        // synthetic "fb:{key}" sentinel.
+        _path:       entry._path || `fb:${fbKey}`,
+        _fbKey:      fbKey,
+        _body:       entry._body       || '',
+        name:        entry.name        || '',
+        card_type:   entry.card_type   || '',
+        slots:       entry.slots       || 'hand',
+        player_slot: entry.player_slot || entry.slots || 'hand',
+        generation:  entry.generation  || 1,
+        // Spread known card fields (effect, dr, hands_required, notes…).
+        // _extra was the seed-time bucket — flatten it back so existing
+        // renderers that read card.dr / card.effect keep working.
+        ...(entry._extra || {}),
+        // FB-side ordering hint, used by Arrange close to compute order.
+        _order:      typeof entry.order === 'number' ? entry.order : null,
+      };
+      return card;
+    });
+
+    // Sort by FB `_order` field if present, otherwise stable by fbKey for
+    // deterministic display (push keys are time-ordered, so this gives us
+    // "insertion order" for free until Arrange writes explicit order).
+    cards.sort((a, b) => {
+      if (a._order !== null && b._order !== null) return a._order - b._order;
+      if (a._order !== null) return -1;
+      if (b._order !== null) return 1;
+      return a._fbKey < b._fbKey ? -1 : 1;
+    });
+
+    state.inventory       = cards;
+    state._invFromFirebase = true;
+    refreshDerivedCardLists();
+    if (typeof renderInventoryUI === 'function') renderInventoryUI();
+
+    // Trade and group-loot overlays render their "Your Cards" panes off
+    // state.inventory, so nudge them to re-render whenever the FB snapshot
+    // changes the inventory shape.
+    if (typeof isTradeOverlayOpen === 'function' && isTradeOverlayOpen()) {
+      if (typeof renderTradeYoursZones === 'function') renderTradeYoursZones();
+      if (typeof validateTradeYours    === 'function') validateTradeYours();
+    }
+    if (typeof isGroupLootOpen === 'function' && isGroupLootOpen()) {
+      if (typeof renderGroupLoot === 'function') renderGroupLoot();
+    }
+  };
+
+  state._invFbUnsub = onValue(invRef, handleSnapshot);
+}
+
+/**
+ * Tears down the inventory subscription. Called when session_active flips
+ * false (or on logout).
+ */
+function unsubscribeSessionInventory() {
+  if (state._invFbUnsub) {
+    state._invFbUnsub();
+    state._invFbUnsub = null;
+  }
+  state._invFromFirebase = false;
+}
+
+// =====================================================
+// SESSION INVENTORY — Firebase mutators
+// =====================================================
+
+/**
+ * Returns the Firebase ref for a single inventory entry, given a card object
+ * (or path or fbKey).
+ */
+function _invEntryRef(slug, fbKey) {
+  return ref(db,
+    `${firebaseInventoryPath(state.campaignId, slug)}/${fbKey}`);
+}
+
+/**
+ * Builds the Firebase entry shape for a card from a fully-loaded source FM
+ * (typically the card library file's frontmatter + body). Used when loot
+ * arrives mid-session and we need to write it into a player's inventory.
+ *
+ * Mirrors the seed-time shape so reconcile can match by _path.
+ *
+ * @param {string} sourcePath - The card library path the card was copied from
+ * @param {object} fm         - Parsed frontmatter (includes _body)
+ * @param {string} playerSlot - 'hand' or 'active'
+ * @param {number} order      - Optional order index; defaults to 1e9 (end)
+ * @returns {object}
+ */
+function _invEntryFromCardFm(sourcePath, fm, playerSlot, order) {
+  const known = new Set([
+    '_body', 'name', 'card_type', 'slots', 'player_slot', 'generation', '_path', '_sha',
+  ]);
+  const extra = {};
+  for (const [k, v] of Object.entries(fm)) {
+    if (known.has(k)) continue;
+    if (v === undefined || v === null) continue;
+    extra[k] = v;
+  }
+  return {
+    _path:       sourcePath,
+    _body:       fm._body || '',
+    name:        fm.name || '',
+    card_type:   fm.card_type || '',
+    slots:       fm.slots || 'hand',
+    player_slot: playerSlot || fm.player_slot || fm.slots || 'hand',
+    generation:  fm.generation || 1,
+    _extra:      extra,
+    order:       typeof order === 'number' ? order : 1e9,
+  };
+}
+
+/**
+ * Adds a card to a player's Firebase inventory. Returns the new push key.
+ *
+ * @param {string} slug   - Target player slug
+ * @param {object} entry  - Output of _invEntryFromCardFm
+ * @returns {Promise<string>}
+ */
+async function fbInventoryAdd(slug, entry) {
+  const invRef = ref(db,
+    firebaseInventoryPath(state.campaignId, slug));
+  const newRef = push(invRef);
+  await set(newRef, entry);
+  return newRef.key;
+}
+
+/**
+ * Removes a card from a player's Firebase inventory.
+ */
+async function fbInventoryRemove(slug, fbKey) {
+  await remove(_invEntryRef(slug, fbKey));
+}
+
+/**
+ * Updates one or more fields on a Firebase inventory entry.
+ */
+async function fbInventoryUpdate(slug, fbKey, patch) {
+  await update(_invEntryRef(slug, fbKey), patch);
 }
 
 // =====================================================
@@ -926,20 +1153,19 @@ function subscribeTradePool() {
     _trade.community = all.filter(c => c.offeredBy !== state.characterSlug);
     _trade.offered   = all.filter(c => c.offeredBy === state.characterSlug);
 
-    // Cross-player invalidation: when the claimer fully completes a trade,
-    // they remove the trade pool entry as the LAST step (after the offerer's
-    // file has already been deleted on GitHub). Detecting "entry removed" is
-    // a more reliable signal that the offerer's inventory state has changed
-    // than "claimedBy got set" (which is set BEFORE the file delete and
-    // leads to a brief duplication flash).
-    const offeredKeysNow = new Set(_trade.offered.map(c => c.key));
-    const removedKeys = prevOffered
-      .filter(c => !offeredKeysNow.has(c.key))
-      .map(c => c.key);
-    if (removedKeys.length > 0) {
-      // Re-read inventory from GitHub so the deleted files clear out.
-      loadAndRenderCards().catch(e =>
-        console.warn('Inventory refresh after trade-claim failed:', e));
+    // While the session is active, our Firebase inventory subscriber
+    // handles inventory changes automatically — no extra reload needed
+    // when our offer disappears. Fall back to a GitHub re-read only when
+    // inactive (rare; UI mostly blocks trade outside sessions anyway).
+    if (!state.sessionActive) {
+      const offeredKeysNow = new Set(_trade.offered.map(c => c.key));
+      const removedKeys = prevOffered
+        .filter(c => !offeredKeysNow.has(c.key))
+        .map(c => c.key);
+      if (removedKeys.length > 0) {
+        loadAndRenderCards().catch(e =>
+          console.warn('Inventory refresh after trade-claim failed:', e));
+      }
     }
 
     if (isTradeOverlayOpen()) {
@@ -1083,17 +1309,23 @@ async function persistTradeReorderings() {
     const initial = _trade._initialSlotByPath.get(card._path);
     if (initial === undefined) continue; // arrived after overlay open
     const current = cardSlot(card);
-    if (current !== initial) {
-      // Memory is already correct — write to GitHub only.
-      const { content, sha } = await readFile(card._path);
-      const fm = parseFrontmatter(content);
-      fm.player_slot = current;
-      const { sha: newSha } = await writeFile(card._path, serialiseFrontmatter(fm),
-        `Move ${card.name} to ${current} slot`, sha);
-      // Keep our memory _sha in sync with the new write
-      const liveCard = state.inventory.find(c => c._path === card._path);
-      if (liveCard) liveCard._sha = newSha;
+    if (current === initial) continue;
+
+    if (state.sessionActive) {
+      if (!card._fbKey) continue;
+      await fbInventoryUpdate(state.characterSlug, card._fbKey,
+        { player_slot: current });
+      continue;
     }
+
+    // Inactive: legacy GitHub write.
+    const { content, sha } = await readFile(card._path);
+    const fm = parseFrontmatter(content);
+    fm.player_slot = current;
+    const { sha: newSha } = await writeFile(card._path, serialiseFrontmatter(fm),
+      `Move ${card.name} to ${current} slot`, sha);
+    const liveCard = state.inventory.find(c => c._path === card._path);
+    if (liveCard) liveCard._sha = newSha;
   }
 }
 
@@ -1355,6 +1587,10 @@ async function handleTradeDrop({ event, card, fromZone }) {
       return;
     }
     inventorySetSlot(card._path, 'active');
+    if (state.sessionActive && card._fbKey) {
+      fbInventoryUpdate(state.characterSlug, card._fbKey, { player_slot: 'active' })
+        .catch(e => console.warn('FB slot update failed:', e));
+    }
     reorderInventoryFromTradeDom();
     renderTradeYoursZones();
     validateTradeYours();
@@ -1363,6 +1599,10 @@ async function handleTradeDrop({ event, card, fromZone }) {
 
   if (droppedOnZone === 'trade-hand' && fromZone === 'trade-active') {
     inventorySetSlot(card._path, 'hand');
+    if (state.sessionActive && card._fbKey) {
+      fbInventoryUpdate(state.characterSlug, card._fbKey, { player_slot: 'hand' })
+        .catch(e => console.warn('FB slot update failed:', e));
+    }
     reorderInventoryFromTradeDom();
     renderTradeYoursZones();
     validateTradeYours();
@@ -1387,15 +1627,44 @@ async function publishTradeOffer(card) {
   if (!card._path) return; // safety — only inventory cards can be traded
   const tradePoolRef = ref(db, firebaseTradePath(state.campaignId));
   const newEntryRef  = push(tradePoolRef);
+  // Snapshot the FULL card payload into the trade entry so the claimer can
+  // reconstruct it without ever touching GitHub. While the session is
+  // active, _fbKey points at the offerer's Firebase inventory entry — the
+  // claimer removes that entry as part of delivery. _path stays for the
+  // legacy out-of-session path.
   await set(newEntryRef, {
-    offeredBy:  state.characterSlug,
-    cardPath:   card._path,
-    name:       card.name       || '',
-    card_type:  card.card_type  || '',
-    slots:      card.player_slot || card.slots || 'hand',
-    offeredAt:  Date.now(),
+    offeredBy:    state.characterSlug,
+    offererFbKey: card._fbKey || null,
+    cardPath:     card._path,
+    name:         card.name       || '',
+    card_type:    card.card_type  || '',
+    slots:        card.slots      || 'hand',
+    player_slot:  card.player_slot || card.slots || 'hand',
+    generation:   card.generation || 1,
+    _body:        card._body || '',
+    _extra:       _extractExtraForTrade(card),
+    offeredAt:    Date.now(),
   });
   // _trade.offered will be updated by the onValue subscription
+}
+
+/**
+ * Returns the "extra" frontmatter fields off an inventory card object —
+ * everything beyond the well-known set. Used at trade publish so the
+ * claimer's FB inventory entry preserves dr/effect/notes/etc.
+ */
+function _extractExtraForTrade(card) {
+  const known = new Set([
+    '_path', '_sha', '_fbKey', '_body', '_order',
+    'name', 'card_type', 'slots', 'player_slot', 'generation',
+  ]);
+  const extra = {};
+  for (const [k, v] of Object.entries(card)) {
+    if (known.has(k)) continue;
+    if (v === undefined || v === null) continue;
+    extra[k] = v;
+  }
+  return extra;
 }
 
 /**
@@ -1446,14 +1715,22 @@ async function claimTradeCard(card) {
 
   // Build the in-flight card record. The _isTrade flag tells finaliseArrange
   // to use the trade delivery path (delete offerer's file + remove trade entry)
-  // instead of the loot delivery path.
+  // instead of the loot delivery path. We carry the full snapshot from the
+  // trade entry so deliverTradeCardToPlayer can reconstruct the recipient's
+  // FB inventory entry without re-reading anywhere.
   const incomingCard = {
-    key:       card.key,
-    cardPath:  card.cardPath,
-    name:      card.name,
-    card_type: card.card_type,
-    slots:     card.slots,
-    _isTrade:  true,
+    key:          card.key,
+    cardPath:     card.cardPath,
+    offeredBy:    card.offeredBy,
+    offererFbKey: card.offererFbKey || null,
+    name:         card.name,
+    card_type:    card.card_type,
+    slots:        card.slots,
+    player_slot:  card.player_slot || card.slots,
+    generation:   card.generation || 1,
+    _body:        card._body || '',
+    _extra:       card._extra || {},
+    _isTrade:     true,
   };
 
   if (hasSpace) {
@@ -1529,16 +1806,26 @@ async function releaseTradeClaim(tradeKey) {
 async function copyCardToInventory(srcPath, slug, playerSlot, cardName) {
   _inventoryWritesInFlight++;
   try {
+    // While a session is active: read the source card, write a Firebase
+    // inventory entry directly. No GitHub writes mid-session. The DM's
+    // session-end reconcile will materialise this as a real file on disk.
+    if (state.sessionActive) {
+      const { content } = await readFile(srcPath);
+      const fm = parseFrontmatter(content);
+      const entry = _invEntryFromCardFm(srcPath, fm, playerSlot);
+      await fbInventoryAdd(slug, entry);
+      // The Firebase subscriber will mirror this back into state.inventory
+      // for our own slug; for other slugs the recipient's app handles it.
+      return srcPath; // Legacy callers expected a destination path; the
+                      // synthetic "fb:{key}" path lives only inside the
+                      // recipient's inventory and isn't useful here.
+    }
+
+    // Session inactive — keep the legacy GitHub path so out-of-session
+    // operations (which the UI mostly blocks anyway) still function.
     const baseFilename = srcPath.split('/').pop();
     const baseName     = baseFilename.replace(/\.md$/, '');
     const cardsDir     = `${state.campaignPath}/players/${slug}/cards`;
-
-    /**
-     * Picks a non-colliding filename. Reads the directory listing fresh each
-     * call. Note GitHub's directory listing has a cache lag of a few seconds
-     * after a write, so this can return a stale name immediately after a
-     * prior copy — the retry loop below catches that.
-     */
     const pickDestPath = async () => {
       let filename = baseFilename;
       let destPath = `${cardsDir}/${filename}`;
@@ -1554,11 +1841,6 @@ async function copyCardToInventory(srcPath, slug, playerSlot, cardName) {
       } catch (_) { /* dir doesn't exist yet */ }
       return destPath;
     };
-
-    // Try up to 4 times to pick a fresh name + write. If GitHub returns a
-    // collision (422 — file already exists), we suspect the listing was
-    // stale; brief pause + retry usually wins. After 4 failures, propagate
-    // the error so the caller can surface it.
     let destPath  = null;
     let lastErr   = null;
     for (let attempt = 0; attempt < 4; attempt++) {
@@ -1570,15 +1852,12 @@ async function copyCardToInventory(srcPath, slug, playerSlot, cardName) {
       } catch (e) {
         lastErr = e;
         const msg = String(e?.message || '');
-        // Treat "already exists" / 422 as a stale-listing collision and retry
-        // with a delay; everything else is a hard failure.
         if (!/already exists|422/i.test(msg)) throw e;
         await new Promise(r => setTimeout(r, 350));
       }
     }
     if (lastErr) throw lastErr;
 
-    // If this is THIS character, sync the in-memory inventory too.
     if (slug === state.characterSlug) {
       try {
         const { content, sha } = await readFile(destPath);
@@ -1610,6 +1889,16 @@ async function removeCardFromInventory(card, commitMsg) {
   if (!card._path) return;
   _inventoryWritesInFlight++;
   try {
+    if (state.sessionActive) {
+      // Firebase-side: remove by fbKey. The subscriber will sync state.
+      if (!card._fbKey) {
+        console.warn('removeCardFromInventory: card has no _fbKey while session active', card);
+        return;
+      }
+      await fbInventoryRemove(state.characterSlug, card._fbKey);
+      return;
+    }
+    // Inactive session: legacy GitHub delete + local sync.
     const { sha: freshSha } = await readFile(card._path);
     await deleteFile(card._path, freshSha, commitMsg);
     inventoryRemoveByPath(card._path);
@@ -1629,6 +1918,15 @@ async function setCardSlotInInventory(card, newSlot) {
   if (!card._path || cardSlot(card) === newSlot) return;
   _inventoryWritesInFlight++;
   try {
+    if (state.sessionActive) {
+      if (!card._fbKey) {
+        console.warn('setCardSlotInInventory: card has no _fbKey while session active', card);
+        return;
+      }
+      await fbInventoryUpdate(state.characterSlug, card._fbKey,
+        { player_slot: newSlot });
+      return;
+    }
     const { content, sha } = await readFile(card._path);
     const fm = parseFrontmatter(content);
     fm.player_slot = newSlot;
@@ -1652,14 +1950,43 @@ async function setCardSlotInInventory(card, newSlot) {
  * @param {string} playerSlot - 'hand' or 'active'
  */
 async function deliverTradeCardToPlayer(card, slug, playerSlot) {
-  // 1. Copy from offerer's inventory into ours
-  await copyCardToInventory(card.cardPath, slug, playerSlot, card.name);
+  // Session-active path: pure Firebase. The trade entry carries the full
+  // card payload, so we just push it into the claimer's inventory and
+  // remove it from the offerer's. No GitHub round-trip.
+  if (state.sessionActive) {
+    // 1. Build the FB inventory entry from the trade snapshot.
+    const entry = {
+      _path:       card.cardPath || null,  // null when the card never existed on disk
+      _body:       card._body || '',
+      name:        card.name        || '',
+      card_type:   card.card_type   || '',
+      slots:       card.slots       || 'hand',
+      player_slot: playerSlot,
+      generation:  card.generation  || 1,
+      _extra:      card._extra      || {},
+      order:       1e9,
+    };
+    await fbInventoryAdd(slug, entry);
 
-  // 2. Delete the offerer's original. The GitHub Contents API can serve a
-  //    stale SHA from cache for a few seconds after a recent write, so we
-  //    retry once on the assumption that the first attempt hit a stale SHA.
-  //    If both attempts fail, surface a clear alert so the GM can manually
-  //    clean up the duplicate rather than discover it days later.
+    // 2. Remove the offerer's FB inventory entry. Best-effort — if the
+    //    offerer logged out and somehow lost the key, we'd rather complete
+    //    the delivery than block the claimer.
+    if (card.offererFbKey && card.offeredBy) {
+      try {
+        await fbInventoryRemove(card.offeredBy, card.offererFbKey);
+      } catch (e) {
+        console.warn('Could not remove offerer FB inventory entry:', e);
+      }
+    }
+
+    // 3. Remove the trade pool entry now that delivery is complete.
+    await remove(ref(db, `${firebaseTradePath(state.campaignId)}/${card.key}`))
+      .catch(() => {});
+    return;
+  }
+
+  // Legacy out-of-session path (kept for safety; UI normally blocks this).
+  await copyCardToInventory(card.cardPath, slug, playerSlot, card.name);
   let deleted = false;
   let lastErr = null;
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -1670,7 +1997,6 @@ async function deliverTradeCardToPlayer(card, slug, playerSlot) {
       break;
     } catch (e) {
       lastErr = e;
-      // Brief pause before retry so the cache has a moment to invalidate
       await new Promise(r => setTimeout(r, 400));
     }
   }
@@ -1682,10 +2008,8 @@ async function deliverTradeCardToPlayer(card, slug, playerSlot) {
       `can manually delete the duplicate at:\n\n${card.cardPath}`
     );
   }
-
-  // 3. Remove the trade pool entry now that delivery is complete
-  const tradeRef = ref(db, `${firebaseTradePath(state.campaignId)}/${card.key}`);
-  await remove(tradeRef).catch(() => {});
+  await remove(ref(db, `${firebaseTradePath(state.campaignId)}/${card.key}`))
+    .catch(() => {});
 }
 
 // =====================================================
@@ -1921,10 +2245,25 @@ async function personalLootAccept(cards, fits) {
         ? (curHand   < maxHand   ? 'hand'   : 'active')
         : (curActive < maxActive ? 'active' : 'hand');
 
-      await copyCardToInventory(card.cardPath, state.characterSlug, slot, card.name);
+      if (state.sessionActive) {
+        // Session-active: write a Firebase inventory entry directly from the
+        // payload the DM included on the pending entry. No GitHub round-trip.
+        await fbInventoryAdd(state.characterSlug, {
+          _path:       card.cardPath || null,
+          _body:       card._body || '',
+          name:        card.name        || '',
+          card_type:   card.card_type   || '',
+          slots:       card.slots       || 'hand',
+          player_slot: slot,
+          generation:  card.generation  || 1,
+          _extra:      card._extra      || {},
+          order:       1e9,
+        });
+      } else {
+        await copyCardToInventory(card.cardPath, state.characterSlug, slot, card.name);
+      }
       await remove(ref(db,
         `${firebasePlayerPath(state.campaignId, state.characterSlug)}/pending_personal_loot/${card.key}`));
-      // copyCardToInventory updated state.inventory in memory + re-rendered.
     } catch (e) {
       alert('Could not deliver loot: ' + e.message);
       okBtn.disabled    = false;
@@ -2018,22 +2357,25 @@ function onGroupLootUpdate(session) {
     return;
   }
 
-  // Cross-player invalidation: detect when one of MY holding-pool offers was
-  // claimed (or otherwise removed) by someone else — that means my inventory
-  // file was deleted by their commit. Re-read inventory so it disappears.
-  const prevSession = _gloot.session;
-  if (prevSession) {
-    const prevPool = prevSession.holdingPool || {};
-    const newPool  = session.holdingPool   || {};
-    for (const [k, prev] of Object.entries(prevPool)) {
-      const now = newPool[k];
-      if (prev.ownerSlug !== state.characterSlug) continue;
-      const claimedAway = now && now.claimedBy && now.claimedBy !== state.characterSlug;
-      const removed     = !now;
-      if (claimedAway || removed) {
-        loadAndRenderCards().catch(e =>
-          console.warn('Inventory refresh after group-loot claim failed:', e));
-        break;
+  // Cross-player invalidation only matters when inventory lives on GitHub
+  // (i.e. session inactive). While the session is active, the inventory
+  // Firebase subscriber sees the offerer's FB entry get removed and
+  // syncs state.inventory automatically.
+  if (!state.sessionActive) {
+    const prevSession = _gloot.session;
+    if (prevSession) {
+      const prevPool = prevSession.holdingPool || {};
+      const newPool  = session.holdingPool   || {};
+      for (const [k, prev] of Object.entries(prevPool)) {
+        const now = newPool[k];
+        if (prev.ownerSlug !== state.characterSlug) continue;
+        const claimedAway = now && now.claimedBy && now.claimedBy !== state.characterSlug;
+        const removed     = !now;
+        if (claimedAway || removed) {
+          loadAndRenderCards().catch(e =>
+            console.warn('Inventory refresh after group-loot claim failed:', e));
+          break;
+        }
       }
     }
   }
@@ -2462,12 +2804,16 @@ async function gloot_claimGroupCard(card) {
   // Add to local Incoming. We carry the loot session key so finalise can
   // identify and remove the corresponding Firebase entry.
   _gloot.incoming.push({
-    _glKey:    card.key,
-    _glSource: 'group',
-    cardPath:  card.cardPath,
-    name:      card.name,
-    card_type: card.card_type,
-    slots:     card.slots,
+    _glKey:      card.key,
+    _glSource:   'group',
+    cardPath:    card.cardPath,
+    name:        card.name,
+    card_type:   card.card_type,
+    slots:       card.slots,
+    player_slot: card.player_slot || card.slots || 'hand',
+    generation:  card.generation || 1,
+    _body:       card._body || '',
+    _extra:      card._extra || {},
   });
 
   // Auto-unready if previously ready (but only matters if we hit Ready before
@@ -2505,13 +2851,18 @@ async function gloot_claimHoldingCard(card) {
   }
 
   _gloot.incoming.push({
-    _glKey:    card.key,
-    _glSource: 'holding',
-    _glOwner:  cardData.ownerSlug,
-    cardPath:  cardData.cardPath,
-    name:      cardData.name,
-    card_type: cardData.card_type,
-    slots:     cardData.slots,
+    _glKey:      card.key,
+    _glSource:   'holding',
+    _glOwner:    cardData.ownerSlug,
+    _glOwnerFbKey: cardData.ownerFbKey || '',
+    cardPath:    cardData.cardPath,
+    name:        cardData.name,
+    card_type:   cardData.card_type,
+    slots:       cardData.slots,
+    player_slot: cardData.player_slot || cardData.slots || 'hand',
+    generation:  cardData.generation || 1,
+    _body:       cardData._body || '',
+    _extra:      cardData._extra || {},
   });
 
   // Auto-unready (player must place this card before they can finish)
@@ -2661,12 +3012,14 @@ async function handleGlootDrop({ event, card, fromZone }) {
   switch (target) {
     case 'active':
       if (card._path) {
-        // Inventory card: just update its slot.
+        // Inventory card: update slot in memory + Firebase so a concurrent
+        // snapshot can't overwrite our local move.
         inventorySetSlot(card._path, 'active');
+        if (state.sessionActive && card._fbKey) {
+          fbInventoryUpdate(state.characterSlug, card._fbKey, { player_slot: 'active' })
+            .catch(e => console.warn('FB slot update failed:', e));
+        }
       } else {
-        // Fresh-from-strip card: tag it with the zone the player wants and
-        // keep it in incoming. glootActive() includes these in its derived
-        // list, so the player sees the card in Active immediately.
         card._targetZone = 'active';
         _gloot.incoming.push(card);
       }
@@ -2674,6 +3027,10 @@ async function handleGlootDrop({ event, card, fromZone }) {
     case 'hand':
       if (card._path) {
         inventorySetSlot(card._path, 'hand');
+        if (state.sessionActive && card._fbKey) {
+          fbInventoryUpdate(state.characterSlug, card._fbKey, { player_slot: 'hand' })
+            .catch(e => console.warn('FB slot update failed:', e));
+        }
       } else {
         card._targetZone = 'hand';
         _gloot.incoming.push(card);
@@ -2745,11 +3102,19 @@ async function writeMyGroupState() {
     const localKey = card._path
       ? card._path.replace(/[.#$/[\]]/g, '_')
       : `h${idx}`;
+    // Carry the full card payload AND the offerer's _fbKey so a Phase-2
+    // claimer can do a pure Firebase transfer (remove from our inventory,
+    // add to theirs) without hitting GitHub mid-session.
     holding[localKey] = {
-      cardPath:  card._path || '',
-      name:      card.name      || '',
-      card_type: card.card_type || '',
-      slots:     card.slots     || 'hand',
+      cardPath:    card._path || '',
+      ownerFbKey:  card._fbKey || '',
+      name:        card.name        || '',
+      card_type:   card.card_type   || '',
+      slots:       card.slots       || 'hand',
+      player_slot: card.player_slot || card.slots || 'hand',
+      generation:  card.generation  || 1,
+      _body:       card._body || '',
+      _extra:      _extractExtraForTrade(card),
     };
   });
 
@@ -2818,17 +3183,22 @@ async function finaliseGroupLoot() {
         for (const [slug, st] of Object.entries(ps)) {
           for (const [, card] of Object.entries(st.holding || {})) {
             // Composite-key based on a monotonically growing index so reading
-            // the pool is order-stable.
+            // the pool is order-stable. Carry the full card payload through
+            // so a claimer can build a Firebase inventory entry directly.
             newPool[`hp_${entryIdx++}`] = {
-              ownerSlug: slug,
-              cardPath:  card.cardPath  || '',
-              name:      card.name      || '',
-              card_type: card.card_type || '',
-              slots:     card.slots     || 'hand',
-              claimedBy: null,
+              ownerSlug:   slug,
+              ownerFbKey:  card.ownerFbKey  || '',
+              cardPath:    card.cardPath    || '',
+              name:        card.name        || '',
+              card_type:   card.card_type   || '',
+              slots:       card.slots       || 'hand',
+              player_slot: card.player_slot || card.slots || 'hand',
+              generation:  card.generation  || 1,
+              _body:       card._body       || '',
+              _extra:      card._extra      || {},
+              claimedBy:   null,
             };
           }
-          // Clear per-player holding + ready
           ps[slug] = { ...st, ready: false, holding: {} };
         }
         return { ...cur, phase: 'trade', playerStates: ps, holdingPool: newPool };
@@ -2879,17 +3249,45 @@ async function finaliseGroupLoot() {
 async function commitMyGroupLootResult() {
   const slug = state.characterSlug;
 
-  // 1. Fresh-from-strip cards (group or holding source) that the player
-  //    placed into Active/Hand: copy from source path into our inventory.
-  //    For holding-source cards, also delete the prior owner's file.
-  //    Cards STILL in incoming at finalise lost their target — they got
-  //    claimed but never placed — drop them silently (no copy, no delete).
+  // 1. Fresh-from-strip cards placed into Active/Hand.
+  //    During a session: write a Firebase inventory entry directly (the
+  //    card payload already lives in the loot session for group cards, or
+  //    in the incoming object for holding-pool cards). For holding-source
+  //    cards we also remove the prior owner's FB inventory entry.
+  //    While inactive: legacy GitHub copy/delete path.
   for (const card of _gloot.incoming) {
     if (!card._glSource) continue;
     if (card._targetZone !== 'active' && card._targetZone !== 'hand') continue;
 
-    await copyCardToInventory(card.cardPath, slug, card._targetZone, card.name);
+    if (state.sessionActive) {
+      // Build the FB inventory entry. For group-source cards, the loot
+      // session populated _body/_extra. For holding-source cards, the
+      // claim handler copied them from the holding pool entry.
+      const entry = {
+        _path:       card.cardPath || null,
+        _body:       card._body || '',
+        name:        card.name      || '',
+        card_type:   card.card_type || '',
+        slots:       card.slots     || 'hand',
+        player_slot: card._targetZone,
+        generation:  card.generation || 1,
+        _extra:      card._extra || {},
+        order:       1e9,
+      };
+      await fbInventoryAdd(slug, entry);
 
+      if (card._glSource === 'holding' && card._glOwnerFbKey && card._glOwner) {
+        try {
+          await fbInventoryRemove(card._glOwner, card._glOwnerFbKey);
+        } catch (e) {
+          console.warn('Could not remove prior owner FB entry for', card.name, e);
+        }
+      }
+      continue;
+    }
+
+    // Legacy GitHub path
+    await copyCardToInventory(card.cardPath, slug, card._targetZone, card.name);
     if (card._glSource === 'holding') {
       try {
         const { sha } = await readFile(card.cardPath);
@@ -2900,30 +3298,30 @@ async function commitMyGroupLootResult() {
     }
   }
 
-  // 2. Persist any Active↔Hand reorderings the player did during the session.
-  //    Compare each inventory card's current slot against the snapshot taken
-  //    at session-open and write only the diffs.
+  // 2. Persist any Active↔Hand reorderings done during this session.
   if (_gloot._initialSlotByPath) {
     for (const card of state.inventory) {
       const initial = _gloot._initialSlotByPath.get(card._path);
-      if (initial === undefined) continue; // arrived after open
+      if (initial === undefined) continue;
       const current = cardSlot(card);
-      if (current !== initial) {
-        // Memory is already correct (drag handler used inventorySetSlot).
-        // Write the GitHub frontmatter only.
-        const { content, sha } = await readFile(card._path);
-        const fm = parseFrontmatter(content);
-        fm.player_slot = current;
-        const { sha: newSha } = await writeFile(card._path, serialiseFrontmatter(fm),
-          `Move ${card.name} to ${current} slot`, sha);
-        const liveCard = state.inventory.find(c => c._path === card._path);
-        if (liveCard) liveCard._sha = newSha;
+      if (current === initial) continue;
+
+      if (state.sessionActive) {
+        if (!card._fbKey) continue;
+        await fbInventoryUpdate(slug, card._fbKey, { player_slot: current });
+        continue;
       }
+      const { content, sha } = await readFile(card._path);
+      const fm = parseFrontmatter(content);
+      fm.player_slot = current;
+      const { sha: newSha } = await writeFile(card._path, serialiseFrontmatter(fm),
+        `Move ${card.name} to ${current} slot`, sha);
+      const liveCard = state.inventory.find(c => c._path === card._path);
+      if (liveCard) liveCard._sha = newSha;
     }
   }
 
-  // 3. Discard zone (Phase 2): permanently delete inventory cards in here.
-  //    discardPaths references inventory cards that are still in state.inventory.
+  // 3. Discard zone (Phase 2): remove inventory cards.
   for (const path of _gloot.discardPaths) {
     const card = state.inventory.find(c => c._path === path);
     if (!card) continue;
@@ -2959,13 +3357,19 @@ function openArrangeOverlay() {
   _arrange.discard  = [];
 
   // Incoming = pending personal loot, decorated with a flag so finalise knows
-  // to clear the Firebase entry when the player places it.
+  // to clear the Firebase entry when the player places it. We carry the full
+  // payload (_body / _extra / generation / player_slot) so finalise can build
+  // a Firebase inventory entry directly during a session — no GitHub re-read.
   _arrange.incoming = Object.entries(_personalLoot.cards).map(([key, c]) => ({
     key,
-    cardPath:  c.cardPath,
-    name:      c.name,
-    card_type: c.card_type,
-    slots:     c.slots,
+    cardPath:    c.cardPath,
+    name:        c.name,
+    card_type:   c.card_type,
+    slots:       c.slots,
+    player_slot: c.player_slot || c.slots || 'hand',
+    generation:  c.generation || 1,
+    _body:       c._body || '',
+    _extra:      c._extra || {},
     _isPersonalPending: true,
   }));
 
@@ -3306,7 +3710,7 @@ async function finaliseArrange() {
     }
 
     // 3. Pending personal-loot incoming cards
-    //    - Dragged to Active/Hand → copy into inventory + clear Firebase
+    //    - Dragged to Active/Hand → write into inventory + clear Firebase
     //    - Dragged to Discard    → clear Firebase only
     //    - Still in Incoming     → blocked by validation
     const incomingPlaced = [
@@ -3314,7 +3718,23 @@ async function finaliseArrange() {
       ..._arrange.hand.filter(c => c._isPersonalPending).map(c => ({ card: c, slot: 'hand' })),
     ];
     for (const { card, slot } of incomingPlaced) {
-      await copyCardToInventory(card.cardPath, state.characterSlug, slot, card.name);
+      if (state.sessionActive) {
+        // Pure Firebase: build the inventory entry from the DM-supplied
+        // payload (carried through openArrangeOverlay).
+        await fbInventoryAdd(state.characterSlug, {
+          _path:       card.cardPath || null,
+          _body:       card._body || '',
+          name:        card.name      || '',
+          card_type:   card.card_type || '',
+          slots:       card.slots     || 'hand',
+          player_slot: slot,
+          generation:  card.generation || 1,
+          _extra:      card._extra || {},
+          order:       1e9,
+        });
+      } else {
+        await copyCardToInventory(card.cardPath, state.characterSlug, slot, card.name);
+      }
       await clearPersonalPending(card.key);
     }
     for (const card of _arrange.discard) {
@@ -3375,6 +3795,7 @@ function reorderInventoryFromArrange() {
 function logout() {
   if (state._fbUnsub)    { state._fbUnsub();    state._fbUnsub    = null; }
   if (_trade._fbUnsub)   { _trade._fbUnsub();   _trade._fbUnsub   = null; }
+  unsubscribeSessionInventory();
   clearTimeout(state._hpTimer);
   // Reset state
   Object.assign(state, {

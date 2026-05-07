@@ -144,6 +144,23 @@ export function firebaseTradePath(campaignId) {
   return `campaigns/${campaignId}/trades`;
 }
 
+/**
+ * Firebase path for a player's live inventory (cards they currently own).
+ *
+ * During an active session this is the source of truth for the player's
+ * cards — populated at session start by seeding from GitHub, mutated by
+ * loot/trade/arrange operations, then reconciled back to GitHub at session
+ * end. The player's main sheet, the trade overlay, and the group-loot
+ * overlay all read inventory from this path live via onValue subscription.
+ *
+ * @param {string} campaignId
+ * @param {string} characterSlug
+ * @returns {string}
+ */
+export function firebaseInventoryPath(campaignId, characterSlug) {
+  return `campaigns/${campaignId}/session/${characterSlug}/inventory`;
+}
+
 // ─── App constants ─────────────────────────────────────────────────────────────
 
 /** Milliseconds to wait after an HP change before writing back to GitHub. */
