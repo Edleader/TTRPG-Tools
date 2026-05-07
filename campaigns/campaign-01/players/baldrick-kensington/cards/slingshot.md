@@ -10,7 +10,7 @@ effect: 1+d4
 slots: active
 value: 15
 notes: Silent; unlimited ammunition
-player_slot: active
+player_slot: hand
 ---
 
 A Y-shaped frame and a strip of rubber. Ammunition is anything small and hard. Silent, and you'll never run out of rocks.
