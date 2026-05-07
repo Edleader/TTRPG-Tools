@@ -19,10 +19,9 @@ hp_current: 28
 spell_slots_spent: 0
 card_order:
   - campaigns/campaign-01/players/big-donny-t/cards/leather-vest.md
-  - campaigns/campaign-01/players/big-donny-t/cards/binoculars.md
+  - campaigns/campaign-01/cards/abilities/bull-rush.md
   - campaigns/campaign-01/players/big-donny-t/cards/baseball-bat.md
-  - campaigns/campaign-01/players/big-donny-t/cards/field-medkit.md
-  - campaigns/campaign-01/players/big-donny-t/cards/taunt.md
+  - campaigns/campaign-01/players/baldrick-kensington/cards/lock-picks.md
 ---
 
 # Big Donny T (Matt)
