@@ -17,13 +17,9 @@ perk_10:
 perk_17: 
 card_order:
   - campaigns/campaign-01/players/baldrick-kensington/cards/taunt.md
-  - campaigns/campaign-01/players/baldrick-kensington/cards/time-slip.md
   - campaigns/campaign-01/players/baldrick-kensington/cards/kitchen-knife.md
-  - campaigns/campaign-01/cards/armour/reinforced-cargo-pants.md
   - campaigns/campaign-01/players/baldrick-kensington/cards/lock-picks.md
-  - campaigns/campaign-01/players/baldrick-kensington/cards/bull-rush.md
-  - campaigns/campaign-01/players/baldrick-kensington/cards/padded-jacket.md
-  - campaigns/campaign-01/players/baldrick-kensington/cards/slingshot.md
+  - campaigns/campaign-01/cards/abilities/focussed-disarm.md
 cardPath: campaigns/campaign-01/cards/abilities/hold-the-line.md
 card_type: ability
 generation: 1
