@@ -1,9 +1,9 @@
 ---
-card_type: ability
 name: Taunt
-generation: 1
+card_type: ability
 slots: active
 player_slot: active
+generation: 1
 ---
 
 **To play:** Primary Action
