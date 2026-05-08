@@ -70,7 +70,7 @@ She doesn't tell them how. She trusts them to work it out.
 
 There is a knock at the front door. Darren answers it. He stands there for a moment, then calls for Mara without saying anything.
 
-**Charlotte** is outside. She is small — nine years old, though she carries it reluctantly, the kind of kid who tries to seem unbothered by things that are clearly bothering her. Her shoes are wrong for the amount of walking she's done. She has a battered notebook tucked under one arm.
+**Charlotte** is outside. She is small — nine years old, though she carries it reluctantly, the kind of kid who tries to seem unbothered by things that are clearly bothering her. Her shoes are wrong for the amount of walking she's done. She has a battered backpack worn as neatly as possible with both straps. The picture of innocence.
 
 She doesn't explain herself immediately. If the party ask who she is:
 
@@ -86,7 +86,7 @@ That's Brad's house. She's been in the area since the morning after the anomaly 
 
 She has been outside all night.
 
-**What Mara does:** takes her in without ceremony. She finds Charlotte a blanket and a spot near the back wall, brushes her hand through her hair, then goes back to what she was doing. Watching this interaction stands out to you, every other encounter with Mara has been transactional, in this, there is a breif glimpse of tenderness. This is someone who has already absorbed a great deal and keeps moving.
+**What Mara does:** takes her in without ceremony. She finds Charlotte a blanket and a spot near the back wall, brushes her hand through her hair, then goes back to what she was doing. Watching this interaction stands out to you, every other encounter with Mara has been transactional, in this, there is a breif glimpse of tenderness.
 
 **What Charlotte does:** sits in her corner. Pulls out the notebook. Draws.
 
