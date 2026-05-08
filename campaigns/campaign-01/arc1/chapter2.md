@@ -168,11 +168,11 @@ The party can look at it and move on. Do not explain it. Just make it visible.
 ### Scene — The Service Station
 
 > *"The forecourt opens up ahead of you — wider than you remember service stations being, now that nothing's moving on it. The canopy is still up, mostly, though one corner sags where a support's bent inward. Faded petrol-company logos peeling off the pillars. Six pump housings out under the canopy in two rows of three; two of them have been pulled open at the side panels and stripped of anything copper or aluminium, wires hanging out like spilled guts. The other four look untouched but lifeless — no power, no displays, just dark plastic.*
->
-> *The shopfront behind the pumps is gutted. Glass front shattered, shelves tipped, the till-counter pulled out from the wall. Whatever was useful in there went a long time ago. A handwritten sign — 'CLOSED FOR EMERGENCY' — is still taped to the inside of the door, the tape gone yellow.*
->
+
+> *The shopfront behind the pumps is gutted. Glass front shattered, shelves tipped, the till-counter pulled out from the wall. Whatever was useful in there went a long time ago. What looks like it used to be the Open/Closed neon sign lays trampled on the floor.*
+
 > *Out the back of the forecourt, behind the building, you can see the air-pump bay and a row of three sad-looking parking bays. A wrecked sedan sits in one of them, bonnet up, engine half-pulled-out — someone tried to salvage something and gave up. There are two industrial wheelie bins, one tipped on its side. A stack of old tyres. A skip half-full of construction rubble — broken concrete, a length of rebar, twisted aluminium guttering. Weeds coming up between the paving slabs.*
->
+
 > *In the centre of the forecourt floor — between the two rows of pumps — is a flush metal access cap, about the size of a dinner plate, with a recessed lifting handle. Heavy-duty padlock through the handle. The cap reads UNLEADED on a faded stencil. There are two more caps further along the row — DIESEL and PREMIUM. Same kind of lock on each."*
 
 **GM note (read for context, do not narrate):** there are three underground tanks. Diesel is what Darren asked for. The other two (unleaded petrol, premium petrol) are still full or nearly so — *this matters for the scavenger encounter and for what the community gets long-term*. The padlocks are old, rusted, and not strong; they're a deterrent, not a real barrier.
