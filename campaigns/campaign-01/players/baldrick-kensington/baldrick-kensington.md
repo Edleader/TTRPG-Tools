@@ -15,8 +15,8 @@ swaps_remaining: 0
 perk_5: ""
 perk_10: ""
 perk_17: ""
-hp_current: 32
-spell_slots_spent: 0
+hp_current: 22
+spell_slots_spent: 2
 ---
 
 # Baldrick "Ballsy" Kensington III (Ben)
