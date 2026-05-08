@@ -2489,21 +2489,50 @@ function extractExtraFields(fm) {
 async function reconcileSessionInventoriesToGitHub() {
   if (!state.activeCampaign) return;
 
+  // Each player's reconcile collects any per-file failures; we surface
+  // them to the DM after all reconciles run so the GM knows when GitHub
+  // didn't actually match what Firebase said. Previously these failures
+  // were swallowed by a console.warn and discarded cards reappeared on
+  // next session start (round-2 test T-arrange-2).
+  const failures = [];
+
   const tasks = state.playerFiles.map(async (pf) => {
     const slug = pf.path.split('/players/')[1]?.split('/')[0] || '';
     if (!slug) return;
 
     try {
-      await reconcileSinglePlayerInventory(slug);
+      const playerFailures = await reconcileSinglePlayerInventory(slug);
+      if (playerFailures && playerFailures.length > 0) {
+        failures.push({ slug, errors: playerFailures });
+      }
     } catch (e) {
       console.error(`Reconcile failed for ${slug}:`, e);
+      failures.push({ slug, errors: [`Whole reconcile failed: ${e.message || e}`] });
     }
   });
 
   await Promise.all(tasks);
+
+  if (failures.length > 0) {
+    const lines = failures.map(({ slug, errors }) => {
+      return `${slug}:\n  - ` + errors.join('\n  - ');
+    });
+    alert(
+      'Some cards could not be saved to GitHub:\n\n' +
+      lines.join('\n\n') +
+      '\n\nFirebase still has the correct state. Try ending the session ' +
+      'again, or check your network/Cloudflare Worker.'
+    );
+  }
 }
 
 async function reconcileSinglePlayerInventory(slug) {
+  // Collected so reconcileSessionInventoriesToGitHub can show one alert
+  // at the end. Anything pushed here is something the DM should know
+  // about — silently warning to console isn't enough because the player
+  // sees the wrong state next session.
+  const failures = [];
+
   const invRef  = ref(_db, firebaseInventoryPath(state.activeCampaign.id, slug));
   const invSnap = await get(invRef);
   const fbEntries = invSnap.val() || {};
@@ -2533,18 +2562,22 @@ async function reconcileSinglePlayerInventory(slug) {
   for (const ghFile of ghFiles) {
     const fb = fbByPath.get(ghFile.path);
     if (fb) {
-      // Card still in inventory — rewrite frontmatter (player_slot might
-      // have changed, extras might be unchanged but it's cheap to rewrite).
-      await writeReconciledCard(ghFile.path, fb);
-      fbByPath.delete(ghFile.path);   // mark as consumed
-    } else {
-      // Card no longer in player's Firebase inventory — they traded it
-      // away or discarded it. Delete the file.
       try {
-        const { sha } = await readFile(ghFile.path);
-        await deleteFile(ghFile.path, sha, `Reconcile: remove ${ghFile.name} from ${slug}`);
+        await writeReconciledCard(ghFile.path, fb);
       } catch (e) {
-        console.warn(`Could not delete ${ghFile.path}:`, e);
+        console.warn(`Could not update ${ghFile.path}:`, e);
+        failures.push(`update ${ghFile.name}: ${e.message || e}`);
+      }
+      fbByPath.delete(ghFile.path);   // mark as consumed regardless
+    } else {
+      // Card no longer in Firebase inventory — they traded it away or
+      // discarded it. Delete the file from GitHub. Retry once on
+      // stale-sha (GitHub returns 409 if the file changed under us).
+      const ok = await deleteWithStaleShaRetry(ghFile.path,
+        `Reconcile: remove ${ghFile.name} from ${slug}`);
+      if (!ok.ok) {
+        console.warn(`Could not delete ${ghFile.path}:`, ok.error);
+        failures.push(`delete ${ghFile.name}: ${ok.error}`);
       }
     }
   }
@@ -2579,12 +2612,64 @@ async function reconcileSinglePlayerInventory(slug) {
     seenNames.add(finalName);
 
     const destPath = `${cardsDir}/${finalName}`;
-    await writeReconciledCard(destPath, fb, /*creating=*/true);
+    try {
+      await writeReconciledCard(destPath, fb, /*creating=*/true);
+    } catch (e) {
+      console.warn(`Could not create ${destPath}:`, e);
+      failures.push(`create ${finalName}: ${e.message || e}`);
+    }
   }
 
   // 3) Update player .md frontmatter with the card_order array
   const orderedPaths = computeCardOrder(fbList, slug);
-  await savePlayerCardOrder(slug, orderedPaths);
+  try {
+    await savePlayerCardOrder(slug, orderedPaths);
+  } catch (e) {
+    console.warn(`Could not save card_order for ${slug}:`, e);
+    failures.push(`card_order: ${e.message || e}`);
+  }
+
+  return failures;
+}
+
+/**
+ * Deletes a GitHub file, retrying once if the SHA was stale (409 conflict).
+ * GitHub's Contents API gates deletes on the file SHA you send; if anything
+ * else wrote to the file between our read and our delete, the SHA is wrong
+ * and we get a 409. Re-fetch and try once more — usually enough to succeed.
+ *
+ * Returns `{ ok: true }` on success, `{ ok: false, error: <message> }` on
+ * permanent failure. Never throws — all errors are surfaced via the return.
+ *
+ * @param {string} path
+ * @param {string} commitMsg
+ * @returns {Promise<{ok:boolean, error?:string}>}
+ */
+async function deleteWithStaleShaRetry(path, commitMsg) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let sha;
+    try {
+      ({ sha } = await readFile(path));
+    } catch (e) {
+      const msg = String(e?.message || e);
+      // 404 means the file is already gone — that's the desired state.
+      if (/404|not\s*found/i.test(msg)) return { ok: true };
+      return { ok: false, error: `read for delete: ${msg}` };
+    }
+    try {
+      await deleteFile(path, sha, commitMsg);
+      return { ok: true };
+    } catch (e) {
+      const msg = String(e?.message || e);
+      // 409 = stale SHA; 422 sometimes means SHA mismatch too. Retry once.
+      if (attempt === 0 && /409|422|conflict|sha/i.test(msg)) {
+        await new Promise(r => setTimeout(r, 250));
+        continue;
+      }
+      return { ok: false, error: msg };
+    }
+  }
+  return { ok: false, error: 'unknown failure' };
 }
 
 /**
@@ -2863,11 +2948,14 @@ function renderDmObserverCards(session) {
     summary.className = 'dm-observer-ready-summary';
 
     for (const slug of slugs) {
-      const ready    = !!states[slug].ready;
-      const holding  = Object.keys(states[slug].holding || {}).length;
-      const pill     = document.createElement('span');
-      pill.className = 'dm-observer-ready-pill' + (ready ? ' is-ready' : '');
-      pill.textContent = `${slug}${ready ? ' ✓' : ''}${holding > 0 ? ` (holding ${holding})` : ''}`;
+      const ready     = !!states[slug].ready;
+      const committed = !!states[slug].committed;
+      const holding   = Object.keys(states[slug].holding || {}).length;
+      const pill      = document.createElement('span');
+      pill.className  = 'dm-observer-ready-pill' + (committed ? ' is-ready' : (ready ? ' is-ready' : ''));
+      // Status priority: committed > ready > waiting; flag holding count too.
+      const status = committed ? ' (saved)' : ready ? ' ✓' : '';
+      pill.textContent = `${slug}${status}${holding > 0 ? ` (holding ${holding})` : ''}`;
       summary.appendChild(pill);
     }
     container.appendChild(summary);
@@ -2875,18 +2963,37 @@ function renderDmObserverCards(session) {
 }
 
 /**
- * DM abandons all remaining unclaimed loot.
- * Clears the Firebase loot session entirely.
+ * Force-closes the loot session. Wipes the Firebase loot node entirely;
+ * every player's onValue listener fires with null and their overlay closes.
+ *
+ * Use cases:
+ *   - Pre-finalise: abandon all remaining unclaimed loot.
+ *   - Post-finalise: get a stuck session unstuck if a player closed their
+ *     tab without clicking Finalise (their `committed` flag stays false,
+ *     so the last-committer cleanup never fires and the session lingers).
+ *
+ * WARNING: any cards a player has claimed-but-not-yet-committed
+ * (locally-only in their _gloot.incoming) will evaporate. The DM should
+ * confirm with players that everyone clicked Finalise first.
  */
 async function abandonLoot() {
   if (!state.activeCampaign) return;
-  if (!confirm('Abandon all remaining unclaimed loot? This cannot be undone.')) return;
+  const ok = confirm(
+    'Force-close the loot session?\n\n' +
+    'This deletes the loot data from Firebase entirely. Use this if a ' +
+    'player has closed their tab and the session is stuck waiting for ' +
+    'their Finalise.\n\n' +
+    'WARNING: any cards a player has claimed but NOT yet finalised will ' +
+    'be lost. Make sure every player has clicked Finalise first.\n\n' +
+    'Continue?'
+  );
+  if (!ok) return;
 
   try {
     await remove(ref(_db, firebaseLootPath(state.activeCampaign.id)));
     closeDmLootObserver();
   } catch (e) {
-    alert('Failed to abandon loot: ' + e.message);
+    alert('Failed to force-close loot: ' + e.message);
   }
 }
 
