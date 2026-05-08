@@ -19,12 +19,11 @@ spell_slots_spent: 0
 card_order:
   - campaigns/campaign-01/players/big-donny-t/cards/focussed-disarm.md
   - campaigns/campaign-01/players/big-donny-t/cards/motorcycle-helmet.md
-  - campaigns/campaign-01/cards/spells/muscle-cramp.md
-  - campaigns/campaign-01/players/baldrick-kensington/cards/compound-bow.md
-  - campaigns/campaign-01/cards/spells/static-discharge.md
   - campaigns/campaign-01/players/big-donny-t/cards/compound-bow.md
-  - campaigns/campaign-01/cards/items/field-medkit.md
-  - campaigns/campaign-01/cards/items/lighter.md
+  - campaigns/campaign-01/players/big-donny-t/cards/compound-bow-2.md
+  - campaigns/campaign-01/players/big-donny-t/cards/field-medkit.md
+  - campaigns/campaign-01/players/big-donny-t/cards/lighter.md
+  - campaigns/campaign-01/players/big-donny-t/cards/static-discharge.md
 ---
 
 # Big Donny T (Matt)
