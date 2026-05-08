@@ -17,7 +17,12 @@ perk_17: ""
 hp_current: 32
 spell_slots_spent: 0
 currency: 0
-card_order: []
+card_order:
+  - campaigns/campaign-01/cards/weapons/sledgehammer.md
+  - campaigns/campaign-01/cards/abilities/hold-the-line.md
+  - campaigns/campaign-01/cards/spells/lung-constriction.md
+  - campaigns/campaign-01/cards/spells/static-discharge.md
+  - campaigns/campaign-01/cards/weapons/crowbar.md
 ---
 
 # Baldrick "Ballsy" Kensington III (Ben)
