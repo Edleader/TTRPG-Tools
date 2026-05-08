@@ -2877,9 +2877,21 @@ function isMyHoldingPoolPath(path) {
   if (!session || (session.phase || 'claim') !== 'trade') return false;
   const pool = session.holdingPool || {};
   for (const entry of Object.values(pool)) {
+    // Keep hiding the card from the original owner whenever the pool
+    // entry still exists, regardless of whether someone else has
+    // claimed it. The previous `!entry.claimedBy` check unhid the card
+    // the instant a claim landed — but the card hasn't been physically
+    // removed from the owner's inventory yet (that happens at
+    // finalise/commit). Result: 5/4 hand on the original owner because
+    // their original card came back AND their newly-claimed group card
+    // was already occupying that slot. Round-6 T-flicker-1 caught this.
+    //
+    // When the pool entry is removed (by finalise commit, by Take Back,
+    // or by DM force-close), this filter naturally lets the card show
+    // again — but by then it's been removed from FB inventory anyway,
+    // so it disappears from state.inventory rather than reappearing.
     if (entry.ownerSlug === state.characterSlug
-        && entry.cardPath === path
-        && !entry.claimedBy) {
+        && entry.cardPath === path) {
       return true;
     }
   }

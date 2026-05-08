@@ -44,7 +44,7 @@ import { startDrag, findTileAt } from '../shared/dragReorder.js';
 
 import { initializeApp }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getDatabase, ref, onValue, set, remove, push, runTransaction, get }
+import { getDatabase, ref, onValue, set, remove, push, runTransaction, get, update }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
 
 const _fbApp = initializeApp(FIREBASE_CONFIG);
@@ -1299,9 +1299,14 @@ function updatePlayerHpDisplay() {
 
   // Currency live update — patch the value span directly so DM
   // Distribute Currency writes show up without a full panel rebuild.
+  // Also patch the Distribute Currency modal's per-row "(current: N)"
+  // label if the modal is open, so the DM sees player-side changes
+  // without having to close + re-open. (Round-6 T-dist-1 note.)
   for (const [slug, currency] of Object.entries(state.playerCurrencyLive)) {
-    const el = document.getElementById(`pcur-value-${slug}`);
-    if (el) el.textContent = String(currency);
+    const panelEl = document.getElementById(`pcur-value-${slug}`);
+    if (panelEl) panelEl.textContent = String(currency);
+    const modalEl = document.getElementById(`cur-row-current-${slug}`);
+    if (modalEl) modalEl.textContent = `(current: ${currency})`;
   }
 
   // Show/hide approve buttons for pending rest requests + pending-loot badges
