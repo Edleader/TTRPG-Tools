@@ -3162,12 +3162,24 @@ async function gloot_claimHoldingCard(card) {
 }
 
 /**
- * "Take Back" — remove one of MY holding-pool entries and let the card
- * reappear in my Active/Hand zone (it was always still in my inventory;
- * isMyHoldingPoolPath was just hiding it).
+ * "Take Back" — withdraw one of MY holding-pool entries.
  *
- * Only valid before someone else has claimed it. The transaction's null-on-
- * claimed guard handles the race.
+ * The card lands in Incoming for the player to re-place, NOT directly
+ * back into Active/Hand. Why: the player may have made room by moving
+ * this card into Holding, then claimed someone else's card into the
+ * freed slot. Auto-returning to Active/Hand could overflow that slot.
+ * Round-out test from round-5 T-13-1 highlighted this — user
+ * suggested putting it in Incoming and they were right.
+ *
+ * Mechanics:
+ *   1. Atomically delete the holding-pool entry (no-op if claimed by
+ *      someone else first — show alert).
+ *   2. Remove the original inventory entry from Firebase. The card no
+ *      longer "lives" in inventory — it lives in local Incoming until
+ *      the player places it (or DM force-closes the session).
+ *   3. Push a fresh-claim-style entry into _gloot.incoming. Player can
+ *      now drag it into Active or Hand or Discard from Incoming, just
+ *      like any other claimed card.
  */
 async function gloot_takeBackHolding(card) {
   const poolRef = ref(db,
@@ -3185,14 +3197,44 @@ async function gloot_takeBackHolding(card) {
     return;
   }
 
-  // Force an immediate local re-render: the FB onValue listener WILL fire
-  // shortly with the same delete propagated, but its timing isn't
-  // guaranteed relative to runTransaction's promise resolution. Mutating
-  // _gloot.session.holdingPool locally and re-rendering means the card
-  // reappears in Active/Hand the instant the transaction resolves — no
-  // waiting for the round trip. The next listener fire is then a no-op
-  // (same final state). Round-3 T-gloot-8 caught this: card stayed
-  // hidden in trade phase UI after Take Back until next render.
+  // Look up the inventory card by path so we can carry its full payload
+  // into the incoming entry AND remove its FB inventory record.
+  const invCard = state.inventory.find(c => c._path === card.cardPath);
+
+  // Remove the original FB inventory entry. The card now lives ONLY in
+  // local _gloot.incoming until placed at finalise.
+  if (state.sessionActive && invCard && invCard._fbKey) {
+    try {
+      await fbInventoryRemove(state.characterSlug, invCard._fbKey);
+    } catch (e) {
+      console.warn('Could not remove inventory entry on take-back:', e);
+    }
+  }
+
+  // Push to local Incoming as a fresh-claim-style card. Setting
+  // _glSource: 'holding' and _glOwner/_glOwnerFbKey both as ourselves
+  // means commitMyGroupLootResult treats it like any other holding-pool
+  // claim — it gets a new FB inventory entry with the player's chosen
+  // _targetZone. Skip the cross-player owner-removal because we already
+  // did it above.
+  _gloot.incoming.push({
+    _glKey:        card.key,
+    _glSource:     'holding',
+    _glOwner:      state.characterSlug,
+    _glOwnerFbKey: '',  // already removed above; commit will skip the cross-player remove
+    cardPath:      card.cardPath,
+    name:          card.name,
+    card_type:     card.card_type,
+    slots:         card.slots,
+    player_slot:   card.player_slot || card.slots || 'hand',
+    generation:    card.generation || 1,
+    _body:         card._body || '',
+    _extra:        card._extra || {},
+  });
+
+  // Force an immediate local re-render — the FB onValue listener will
+  // fire shortly with the same final state but its timing isn't
+  // guaranteed relative to runTransaction's promise resolution.
   if (_gloot.session && _gloot.session.holdingPool) {
     delete _gloot.session.holdingPool[card.key];
   }
