@@ -1,6 +1,6 @@
 ---
 type: player
-name: Hold the Line
+name: Baldrick "Ballsy" Kensington III
 player: Ben
 level: 1
 might: 15
@@ -15,17 +15,6 @@ swaps_remaining: 0
 perk_5: 
 perk_10: 
 perk_17: 
-card_order:
-  - campaigns/campaign-01/players/baldrick-kensington/cards/lock-picks.md
-  - campaigns/campaign-01/players/baldrick-kensington/cards/kitchen-knife.md
-  - campaigns/campaign-01/players/baldrick-kensington/cards/taunt.md
-  - campaigns/campaign-01/players/baldrick-kensington/cards/focussed-disarm.md
-cardPath: campaigns/campaign-01/cards/abilities/hold-the-line.md
-card_type: ability
-generation: 1
-player_slot: active
-sentAt: 1778190981764
-slots: active
 ---
 
 # Baldrick "Ballsy" Kensington III (Ben)

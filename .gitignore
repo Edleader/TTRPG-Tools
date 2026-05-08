@@ -7,6 +7,13 @@ claude-code-prompt.md
 firebaseconfig.txt
 cloudflare-worker.js
 github pat.txt
+CONTEXT.txt
+TESTS.txt
+
+# Ignore screenshot files dropped at the repo root
+*.jpg
+*.jpeg
+*.png
 
 # Ignore a folder anywhere in the repo (not just root)
 # **/temp/
