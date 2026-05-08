@@ -96,7 +96,7 @@ She has been outside all night.
 
 Before the party head out, Charlotte approaches whoever seems least intimidating. She holds out a torn piece of paper without making eye contact.
 
-It's covered in symbols — dense, precise, unlike anything the party has seen. The symbols are arranged in a pattern that has clearly been drawn and redrawn many times. This one is a clean copy.
+It's covered in symbols — dense, precise, Cole and Big Donny T recognise the core of the symbols match what they use to cast "Lung Constriction". The symbols are arranged in a pattern that has clearly been drawn and redrawn many times. This one is a clean copy.
 
 > *"I drew it from a dream. I don't know what it is. You can have it if you want."*
 
