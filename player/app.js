@@ -1,7 +1,7 @@
 /**
  * app.js — Player Sheet app.
  *
- * Login flow: campaign → character → PIN
+ * Login flow: campaign → character → Continue
  * Main sheet: HP (numeric +/−, custom damage/heal), spell slots (tap to spend,
  *   persist to GitHub), active/hand card grids, rest buttons (need GM approval
  *   via Firebase), card detail modal.
@@ -301,40 +301,20 @@ async function onCampaignSelected(campaignId) {
 async function onCharacterSelected(slug) {
   if (!slug) return;
   state.characterSlug = slug;
-  // Show PIN step
-  document.getElementById('login-step-pin').style.display = '';
-  resetPinEntry();
 }
 
-// ─── PIN entry ───────────────────────────────────────────────────────────────
-
-let pinBuffer = '';
-
-function resetPinEntry() {
-  pinBuffer = '';
-  updatePinDots();
-  document.getElementById('pin-error').style.display = 'none';
-}
-
-function updatePinDots() {
-  const dots = document.querySelectorAll('.pin-dot');
-  dots.forEach((dot, i) => {
-    dot.classList.toggle('filled', i < pinBuffer.length);
-  });
-}
-
-async function submitPin() {
+/**
+ * Reads the chosen character's .md from GitHub and hands off to loadCharacter.
+ * Wired to the Continue button on the login screen.
+ *
+ * No PIN gate — game runs on trust, players just pick their own character.
+ */
+async function confirmCharacterAndLoad() {
+  if (!state.characterSlug) return;
   const path = `${state.campaignPath}/players/${state.characterSlug}/${state.characterSlug}.md`;
   try {
     const { content, sha } = await readFile(path);
     const fm = parseFrontmatter(content);
-    if (String(fm.pin) !== pinBuffer) {
-      document.getElementById('pin-error').style.display = '';
-      pinBuffer = '';
-      updatePinDots();
-      return;
-    }
-    // PIN correct — load character
     state.characterPath = path;
     state.characterSha  = sha;
     state.fm            = fm;
@@ -1100,7 +1080,14 @@ function subscribeSessionInventory() {
 
   const handleSnapshot = (snapshot) => {
     const data = snapshot.val() || {};
-    const cards = Object.entries(data).map(([fbKey, entry]) => {
+    // The DM's seed writes a `_empty: true` sentinel for players with no
+    // cards so the inventory node exists in Firebase (RTDB collapses
+    // empty objects to null). Filter the sentinel and any other meta
+    // keys (anything starting with underscore at the top level) before
+    // building card objects, so it doesn't render as a phantom card.
+    const cards = Object.entries(data)
+      .filter(([fbKey, entry]) => !fbKey.startsWith('_') && entry && typeof entry === 'object')
+      .map(([fbKey, entry]) => {
       const card = {
         // Identifier carried into the legacy code paths (trade entries,
         // group-loot Sets, arrange DOM). For cards seeded from GitHub this
@@ -1227,6 +1214,13 @@ async function fbInventoryAdd(slug, entry) {
     firebaseInventoryPath(state.campaignId, slug));
   const newRef = push(invRef);
   await set(newRef, entry);
+  // The seed leaves an `_empty: true` sentinel for players starting with
+  // no cards (so the inventory node exists at all in RTDB). Once they
+  // receive their first card we no longer need the sentinel — clear it
+  // best-effort. Failure is harmless; the subscriber/reconcile both
+  // filter underscore-prefixed keys.
+  remove(ref(db, `${firebaseInventoryPath(state.campaignId, slug)}/_empty`))
+    .catch(() => {});
   return newRef.key;
 }
 
@@ -3948,13 +3942,11 @@ function logout() {
     sessionActive: false,
   });
   // Reset login UI
-  document.getElementById('login-step-pin').style.display              = 'none';
   document.getElementById('select-campaign').value                      = '';
   document.getElementById('select-character').innerHTML                 = '<option value="">— choose campaign first —</option>';
   document.getElementById('select-character').disabled                  = true;
   document.getElementById('char-loading-spinner').style.display         = 'none';
   document.getElementById('btn-confirm-character').style.display        = 'none';
-  resetPinEntry();
   showScreen('login-screen');
 }
 
@@ -3980,7 +3972,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // Campaign select
   document.getElementById('select-campaign').addEventListener('change', (e) => {
     const id = e.target.value;
-    document.getElementById('login-step-pin').style.display = 'none';
     // Reset character dropdown while we load the new campaign's characters
     const selChar = document.getElementById('select-character');
     selChar.disabled  = true;
@@ -3995,23 +3986,13 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('select-character').addEventListener('change', (e) => {
     const confirmBtn = document.getElementById('btn-confirm-character');
     confirmBtn.style.display = e.target.value ? '' : 'none';
-    document.getElementById('login-step-pin').style.display = 'none';
   });
 
   document.getElementById('btn-confirm-character').addEventListener('click', () => {
     const slug = document.getElementById('select-character').value;
-    if (slug) onCharacterSelected(slug);
-  });
-
-  // PIN pad
-  document.getElementById('pin-clear').addEventListener('click', resetPinEntry);
-  document.querySelectorAll('.pin-key[data-digit]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      if (pinBuffer.length >= 4) return;
-      pinBuffer += btn.dataset.digit;
-      updatePinDots();
-      if (pinBuffer.length === 4) submitPin();
-    });
+    if (!slug) return;
+    onCharacterSelected(slug);
+    confirmCharacterAndLoad();
   });
 
   // HP controls

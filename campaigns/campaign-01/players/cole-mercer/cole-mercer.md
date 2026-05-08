@@ -7,7 +7,6 @@ might: 9
 finesse: 12
 mind: 15
 playstyle: Support / Healer
-pin: 1234
 active_slots: 4
 hand_slots: 4
 swap_lock: locked

@@ -2363,13 +2363,19 @@ async function seedSessionInventoriesFromGitHub() {
     const slug = pf.path.split('/players/')[1]?.split('/')[0] || '';
     if (!slug) return;
 
-    // Read the player .md frontmatter so we can apply their saved card_order
-    // when seeding (so the Firebase data starts off in the same order the
-    // player last saw on their sheet).
+    // Read the player .md frontmatter so we can:
+    //   (a) apply their saved card_order when seeding inventory, and
+    //   (b) populate a baseline session payload (HP, spell slots, name)
+    //       so every player appears in Firebase from session start, not
+    //       only once they touch their sheet. Lets the DM use the
+    //       Firebase console as a "who's logged in" dashboard, and fixes
+    //       the empty-inventory case where RTDB silently dropped the
+    //       node because writing `{}` is treated as a delete.
+    let playerFm   = {};
     let savedOrder = [];
     try {
       const { content } = await readFile(pf.path);
-      const playerFm = parseFrontmatter(content);
+      playerFm   = parseFrontmatter(content);
       savedOrder = Array.isArray(playerFm.card_order) ? playerFm.card_order : [];
     } catch (_) { /* no frontmatter or unreadable; fall back to listing order */ }
     const orderIdx = new Map(savedOrder.map((p, i) => [p, i]));
@@ -2407,13 +2413,41 @@ async function seedSessionInventoriesFromGitHub() {
 
     const cards = (await Promise.all(reads)).filter(Boolean);
 
-    const block = {};
-    cards.forEach((card, idx) => {
-      block[`c${idx}`] = card;
-    });
+    // Build the inventory block. If the player has zero cards we still
+    // write a sentinel so the inventory node exists in Firebase — RTDB
+    // treats writing `{}` the same as deleting, which would hide the
+    // player from the console until something else writes to their slug.
+    const inventory = {};
+    if (cards.length === 0) {
+      inventory._empty = true;
+    } else {
+      cards.forEach((card, idx) => {
+        inventory[`c${idx}`] = card;
+      });
+    }
 
-    const invRef = ref(_db, firebaseInventoryPath(state.activeCampaign.id, slug));
-    await set(invRef, block);
+    // Build the player session payload from frontmatter. HP and
+    // spell_slots_spent persist across sessions (we don't reset them
+    // on session start); max values are derived from level + stats.
+    const level = playerFm.level || 1;
+    const sessionPayload = {
+      name:              playerFm.name || slug,
+      hp_current:        typeof playerFm.hp_current === 'number'
+        ? playerFm.hp_current
+        : calcMaxHp(level, playerFm.might || 0),
+      spell_slots_spent: typeof playerFm.spell_slots_spent === 'number'
+        ? playerFm.spell_slots_spent
+        : 0,
+      spell_slots_max:   calcMaxSpellSlots(playerFm.mind || 0, level),
+      inventory,
+    };
+
+    // One write per player covers name + HP + spell slots + inventory.
+    // `set` replaces the whole subtree, so any stale fields from a
+    // previously-unflushed session get cleared as part of the seed.
+    const playerSessionRef = ref(_db,
+      `${firebaseCampaignPath(state.activeCampaign.id)}/session/${slug}`);
+    await set(playerSessionRef, sessionPayload);
   });
 
   await Promise.all(tasks);
@@ -2473,8 +2507,12 @@ async function reconcileSinglePlayerInventory(slug) {
   const invRef  = ref(_db, firebaseInventoryPath(state.activeCampaign.id, slug));
   const invSnap = await get(invRef);
   const fbEntries = invSnap.val() || {};
-  // [{ key, ...data }, ...]
-  const fbList = Object.entries(fbEntries).map(([k, v]) => ({ key: k, ...v }));
+  // [{ key, ...data }, ...] — filter the `_empty` sentinel and any other
+  // underscore-prefixed meta keys the seed/runtime might leave behind, so
+  // they don't get treated as ghost cards by the reconcile.
+  const fbList = Object.entries(fbEntries)
+    .filter(([k, v]) => !k.startsWith('_') && v && typeof v === 'object')
+    .map(([k, v]) => ({ key: k, ...v }));
 
   const cardsDir = `${state.activeCampaign.path}/players/${slug}/cards`;
 
