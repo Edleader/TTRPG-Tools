@@ -18,10 +18,10 @@ hp_current: 28
 spell_slots_spent: 0
 card_order:
   - campaigns/campaign-01/players/big-donny-t/cards/focussed-disarm.md
-  - campaigns/campaign-01/players/baldrick-kensington/cards/baseball-bat.md
-  - campaigns/campaign-01/cards/abilities/guard.md
-  - campaigns/campaign-01/cards/items/lighter.md
   - campaigns/campaign-01/players/big-donny-t/cards/hold-the-line.md
+  - campaigns/campaign-01/players/big-donny-t/cards/baseball-bat.md
+  - campaigns/campaign-01/players/big-donny-t/cards/guard.md
+  - campaigns/campaign-01/players/big-donny-t/cards/lighter-2.md
 ---
 
 # Big Donny T (Matt)
