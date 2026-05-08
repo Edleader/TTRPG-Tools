@@ -17,6 +17,11 @@ perk_17: ""
 hp_current: 30
 spell_slots_spent: 0
 currency: 0
+card_order:
+  - campaigns/campaign-01/cards/weapons/shovel.md
+  - campaigns/campaign-01/cards/weapons/kitchen-knife.md
+  - campaigns/campaign-01/cards/armour/motorcycle-helmet.md
+  - campaigns/campaign-01/cards/abilities/taunt.md
 ---
 
 # Ryan Calder (Gibbo)
