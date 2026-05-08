@@ -1,0 +1,1 @@
+Beginning of session, Cole has too many cards to carry. 3 baseball bats and kitchen knife that were marked as "to sell"
