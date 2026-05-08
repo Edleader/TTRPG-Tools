@@ -17,6 +17,9 @@ perk_10: ""
 perk_17: ""
 hp_current: 32
 spell_slots_spent: 0
+card_order:
+  - campaigns/campaign-01/cards/weapons/compound-bow.md
+  - campaigns/campaign-01/cards/weapons/baseball-bat.md
 ---
 
 # Baldrick "Ballsy" Kensington III (Ben)
