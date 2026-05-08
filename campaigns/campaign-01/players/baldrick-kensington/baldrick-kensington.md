@@ -20,13 +20,6 @@ spell_slots_spent: 0
 card_order:
   - campaigns/campaign-01/players/baldrick-kensington/cards/baseball-bat.md
   - campaigns/campaign-01/players/baldrick-kensington/cards/compound-bow.md
-pending_personal_loot:
-  - cardPath: campaigns/campaign-01/cards/abilities/focussed-disarm.md
-    name: Focussed Disarm
-    card_type: ability
-    slots: active
-    generation: 1
-    sentAt: 1778209408475
 ---
 
 # Baldrick "Ballsy" Kensington III (Ben)
