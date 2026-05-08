@@ -86,7 +86,7 @@ That's Brad's house. She's been in the area since the morning after the anomaly 
 
 She has been outside all night.
 
-**What Mara does:** takes her in without ceremony. She finds Charlotte a blanket and a spot near the back wall, then goes back to what she was doing. This is not coldness. This is someone who has already absorbed a great deal and keeps moving.
+**What Mara does:** takes her in without ceremony. She finds Charlotte a blanket and a spot near the back wall, brushes her hand through her hair, then goes back to what she was doing. Watching this interaction stands out to you, every other encounter with Mara has been transactional, in this, there is a breif glimpse of tenderness. This is someone who has already absorbed a great deal and keeps moving.
 
 **What Charlotte does:** sits in her corner. Pulls out the notebook. Draws.
 
