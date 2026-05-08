@@ -26,4 +26,8 @@ card_order:
 
 # Big Donny T (Matt)
 
-*Notes about this character go here.*
+## Non-Card Items
+
+## Background
+
+## Notes

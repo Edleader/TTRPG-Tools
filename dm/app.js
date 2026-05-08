@@ -41,6 +41,8 @@ import {
 
 import { escapeHtml, calcMaxSpellSlots, calcMaxHp } from '../shared/utils.js';
 import { startDrag, findTileAt } from '../shared/dragReorder.js';
+import { applyFormatAction, wireFormatToolbar } from '../shared/formatToolbar.js';
+import { renderMarkdown } from '../shared/markdown.js';
 
 import { initializeApp }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
@@ -789,187 +791,13 @@ function exitDmNotesEdit(andRender) {
 // MARKDOWN FORMAT TOOLBAR
 // =====================================================
 
-/**
- * Applies a formatting action to a textarea at the current cursor position or selection.
- *
- * @param {HTMLTextAreaElement} textarea - The target textarea
- * @param {string}              action   - The format action name (e.g. 'bold', 'h1', 'ul')
- */
-function applyFormatAction(textarea, action) {
-  const start  = textarea.selectionStart;
-  const end    = textarea.selectionEnd;
-  const sel    = textarea.value.slice(start, end);
-  const before = textarea.value.slice(0, start);
-  const after  = textarea.value.slice(end);
+// applyFormatAction and its helpers (getLineAt, insertBlock, etc.) moved
+// to shared/formatToolbar.js so the player app can reuse the same logic.
+// Imported at the top of this file.
 
-  let insert = '';
-  let cursorOffset = 0;
-
-  switch (action) {
-    case 'bold':
-      insert = `**${sel || 'bold text'}**`;
-      cursorOffset = sel ? insert.length : 2;
-      break;
-    case 'italic':
-      insert = `*${sel || 'italic text'}*`;
-      cursorOffset = sel ? insert.length : 1;
-      break;
-    case 'strikethrough':
-      insert = `~~${sel || 'text'}~~`;
-      cursorOffset = sel ? insert.length : 2;
-      break;
-    case 'h1': { const l1 = getLineAt(textarea, start); replaceLineInTextarea(textarea, l1, applyHeadingToLine(l1.text, '#'));   return; }
-    case 'h2': { const l2 = getLineAt(textarea, start); replaceLineInTextarea(textarea, l2, applyHeadingToLine(l2.text, '##'));  return; }
-    case 'h3': { const l3 = getLineAt(textarea, start); replaceLineInTextarea(textarea, l3, applyHeadingToLine(l3.text, '###')); return; }
-    case 'ul': { const lines = sel ? sel.split('\n').map(l => `- ${l}`).join('\n') : '- ';   insertBlock(textarea, start, end, lines, !sel); return; }
-    case 'ol': { const lines = sel ? sel.split('\n').map((l,i) => `${i+1}. ${l}`).join('\n') : '1. '; insertBlock(textarea, start, end, lines, !sel); return; }
-    case 'blockquote': { const lines = sel ? sel.split('\n').map(l => `> ${l}`).join('\n') : '> '; insertBlock(textarea, start, end, lines, !sel); return; }
-    case 'hr': {
-      const hr = '\n\n---\n\n';
-      textarea.value = before + hr + after;
-      const pos = start + hr.length;
-      textarea.setSelectionRange(pos, pos);
-      textarea.dispatchEvent(new Event('input'));
-      return;
-    }
-    case 'table': {
-      const tbl = '\n| Header 1 | Header 2 | Header 3 |\n|----------|----------|----------|\n| Cell     | Cell     | Cell     |\n';
-      textarea.value = before + tbl + after;
-      textarea.setSelectionRange(start + tbl.length, start + tbl.length);
-      textarea.dispatchEvent(new Event('input'));
-      return;
-    }
-  }
-
-  if (insert) {
-    textarea.value = before + insert + after;
-    if (sel) {
-      textarea.setSelectionRange(start, start + insert.length);
-    } else {
-      textarea.setSelectionRange(start + cursorOffset, start + insert.length - cursorOffset);
-    }
-    textarea.dispatchEvent(new Event('input'));
-  }
-}
-
-function getLineAt(textarea, pos) {
-  const val       = textarea.value;
-  const lineStart = val.lastIndexOf('\n', pos - 1) + 1;
-  const lineEnd   = val.indexOf('\n', pos);
-  const end       = lineEnd === -1 ? val.length : lineEnd;
-  return { start: lineStart, end, text: val.slice(lineStart, end) };
-}
-
-function applyHeadingToLine(lineText, prefix) {
-  const stripped = lineText.replace(/^#{1,6}\s*/, '');
-  return `${prefix} ${stripped || 'Heading'}`;
-}
-
-function replaceLineInTextarea(textarea, line, newText) {
-  const val = textarea.value;
-  textarea.value = val.slice(0, line.start) + newText + val.slice(line.end);
-  textarea.setSelectionRange(line.start + newText.length, line.start + newText.length);
-  textarea.dispatchEvent(new Event('input'));
-}
-
-function insertBlock(textarea, start, end, text, isEmpty) {
-  const val    = textarea.value;
-  const before = val.slice(0, start);
-  const after  = val.slice(end);
-  const prefix = before.length > 0 && !before.endsWith('\n') ? '\n' : '';
-  const full   = prefix + text;
-  textarea.value = before + full + after;
-  const newPos = start + full.length;
-  textarea.setSelectionRange(newPos, newPos);
-  textarea.dispatchEvent(new Event('input'));
-}
-
-// =====================================================
-// MARKDOWN RENDERER
-// =====================================================
-
-/**
- * Converts a markdown string to an HTML string.
- * Handles headings, bold, italic, lists, tables, blockquotes, code, and links.
- *
- * @param {string} md - Raw markdown text
- * @returns {string} HTML string
- */
-function renderMarkdown(md) {
-  if (!md) return '';
-  let html = md;
-
-  html = html.replace(/```([^\n]*)\n([\s\S]*?)```/gm, (_, lang, code) =>
-    `<pre><code class="lang-${escapeHtml(lang)}">${escapeHtml(code.trimEnd())}</code></pre>`
-  );
-  html = html.replace(/`([^`\n]+)`/g, (_, code) => `<code>${escapeHtml(code)}</code>`);
-  html = processMarkdownTables(html);
-  html = html.replace(/^(> .+(\n> .+)*)/gm, (block) => {
-    const inner = block.replace(/^> ?/gm, '').trim();
-    return `<blockquote><p>${inlineMarkdown(inner)}</p></blockquote>`;
-  });
-  html = html.replace(/^###### (.+)$/gm, (_, t) => `<h6>${inlineMarkdown(t)}</h6>`);
-  html = html.replace(/^##### (.+)$/gm,  (_, t) => `<h5>${inlineMarkdown(t)}</h5>`);
-  html = html.replace(/^#### (.+)$/gm,   (_, t) => `<h4>${inlineMarkdown(t)}</h4>`);
-  html = html.replace(/^### (.+)$/gm,    (_, t) => `<h3>${inlineMarkdown(t)}</h3>`);
-  html = html.replace(/^## (.+)$/gm,     (_, t) => `<h2>${inlineMarkdown(t)}</h2>`);
-  html = html.replace(/^# (.+)$/gm,      (_, t) => `<h1>${inlineMarkdown(t)}</h1>`);
-  html = html.replace(/^(---|\*\*\*|___)\s*$/gm, '<hr>');
-  html = processLists(html);
-  html = html.replace(/^(?!<[a-z]|[ \t]*$)(.+)$/gm, (line) => {
-    if (/^<(h[1-6]|ul|ol|li|blockquote|pre|hr|table)/.test(line)) return line;
-    return `<p>${inlineMarkdown(line)}</p>`;
-  });
-  html = html.replace(/\n{3,}/g, '\n\n');
-  return html;
-}
-
-function inlineMarkdown(text) {
-  text = text.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-  text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  text = text.replace(/__(.+?)__/g, '<strong>$1</strong>');
-  text = text.replace(/\*([^*\n]+?)\*/g, '<em>$1</em>');
-  text = text.replace(/_([^_\n]+?)_/g, '<em>$1</em>');
-  text = text.replace(/~~(.+?)~~/g, '<del>$1</del>');
-  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
-  text = text.replace(/`([^`]+)`/g, (_, c) => `<code>${escapeHtml(c)}</code>`);
-  text = text.replace(/&(?!amp;|lt;|gt;|quot;|#)/g, '&amp;');
-  return text;
-}
-
-function processLists(html) {
-  html = html.replace(/((?:^[ \t]*[-*+] .+\n?)+)/gm, (block) => {
-    const items = block.trim().split('\n')
-      .map(line => { const m = line.match(/^[ \t]*[-*+] (.+)$/); return m ? `<li>${inlineMarkdown(m[1])}</li>` : ''; })
-      .filter(Boolean).join('\n');
-    return `<ul>\n${items}\n</ul>\n`;
-  });
-  html = html.replace(/((?:^[ \t]*\d+\. .+\n?)+)/gm, (block) => {
-    const items = block.trim().split('\n')
-      .map(line => { const m = line.match(/^[ \t]*\d+\. (.+)$/); return m ? `<li>${inlineMarkdown(m[1])}</li>` : ''; })
-      .filter(Boolean).join('\n');
-    return `<ol>\n${items}\n</ol>\n`;
-  });
-  return html;
-}
-
-function processMarkdownTables(html) {
-  return html.replace(/(^\|.+\|\n\|[-| :]+\|\n(?:\|.+\|\n?)*)/gm, (block) => {
-    const lines   = block.trim().split('\n');
-    if (lines.length < 2) return block;
-    const headers = parseTableRow(lines[0]);
-    const rows    = lines.slice(2).map(parseTableRow);
-    const thead   = `<thead><tr>${headers.map(h => `<th>${inlineMarkdown(h)}</th>`).join('')}</tr></thead>`;
-    const tbody   = rows.map(row =>
-      `<tr>${row.map(cell => `<td>${inlineMarkdown(cell)}</td>`).join('')}</tr>`
-    ).join('\n');
-    return `<table>\n${thead}\n<tbody>\n${tbody}\n</tbody>\n</table>\n`;
-  });
-}
-
-function parseTableRow(line) {
-  return line.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
-}
+// renderMarkdown and its helpers (inlineMarkdown, processLists,
+// processMarkdownTables, parseTableRow) moved to shared/markdown.js
+// so the player notes panel can reuse them. Imported at top of file.
 
 // =====================================================
 // SEARCH

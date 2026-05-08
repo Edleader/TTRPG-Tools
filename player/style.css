@@ -646,6 +646,135 @@ input:disabled,
 .qref-col strong:first-child { margin-top: 0; }
 .qref-col p { margin-bottom: 0.4rem; }
 
+/* ── Player Notes ───────────────────────────────────────────
+   Personal markdown stored in the body of the player .md file.
+   Read-only view by default; click Edit to swap to a textarea
+   with the shared format toolbar. */
+.player-notes-section {
+  padding: 0;
+}
+.player-notes-header {
+  display:     flex;
+  align-items: center;
+  gap:         0.5rem;
+  padding:     0.6rem 0.85rem;
+  border-bottom: 1px solid var(--border);
+}
+.section-header-inline {
+  /* Counter the default block-level styling so the header sits
+     inline with the Edit/Save/Cancel buttons. */
+  flex: 1;
+  padding: 0;
+  border-bottom: none;
+  background: transparent;
+}
+.player-notes-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  flex-wrap: wrap;
+}
+.player-notes-toolbar .format-toolbar-group {
+  display: flex;
+  gap: 2px;
+}
+.player-notes-toolbar .format-toolbar-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  margin: 0 4px;
+}
+.fmt-btn {
+  padding: 3px 9px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-sub);
+  font-size: 0.78rem;
+  cursor: pointer;
+  border-radius: 3px;
+  white-space: nowrap;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+.fmt-btn:hover {
+  background: var(--accent-dim);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.player-notes-view {
+  padding: 0.75rem 0.85rem;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: var(--text);
+  min-height: 4rem;
+}
+.player-notes-view h1,
+.player-notes-view h2,
+.player-notes-view h3 {
+  margin: 0.8rem 0 0.3rem;
+  color: var(--accent);
+}
+.player-notes-view h1:first-child,
+.player-notes-view h2:first-child,
+.player-notes-view h3:first-child {
+  margin-top: 0;
+}
+.player-notes-view p { margin: 0 0 0.5rem; }
+.player-notes-view ul,
+.player-notes-view ol { margin: 0 0 0.5rem 1.2rem; padding: 0; }
+.player-notes-view blockquote {
+  border-left: 3px solid var(--border);
+  margin: 0 0 0.5rem;
+  padding-left: 0.7rem;
+  color: var(--text-sub);
+}
+.player-notes-view code {
+  background: var(--surface-2);
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+  font-size: 0.85em;
+}
+.player-notes-view hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 0.8rem 0;
+}
+.player-notes-view table {
+  border-collapse: collapse;
+  margin: 0 0 0.5rem;
+}
+.player-notes-view th,
+.player-notes-view td {
+  border: 1px solid var(--border);
+  padding: 0.25rem 0.5rem;
+  font-size: 0.85em;
+}
+.player-notes-view-empty {
+  color: var(--text-faint);
+  font-style: italic;
+}
+.player-notes-textarea {
+  display: block;
+  width: calc(100% - 1.7rem);
+  margin: 0.5rem 0.85rem 0.75rem;
+  min-height: 14rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  padding: 0.6rem;
+  font-family: var(--font-ui);
+  font-size: 0.9rem;
+  line-height: 1.4;
+  resize: vertical;
+}
+.player-notes-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 /* ── Logout row ────────────────────────────────────────────── */
 .logout-row {
   display:         flex;

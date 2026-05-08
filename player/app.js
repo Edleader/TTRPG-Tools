@@ -35,6 +35,8 @@ import {
 
 import { escapeHtml, calcMaxSpellSlots, calcMaxHp } from '../shared/utils.js';
 import { startDrag, findZoneAt, findTileAt } from '../shared/dragReorder.js';
+import { wireFormatToolbar } from '../shared/formatToolbar.js';
+import { renderMarkdown }    from '../shared/markdown.js';
 
 import { initializeApp }      from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
 import { getDatabase, ref, onValue, set, get, update, runTransaction, remove, push }
@@ -66,6 +68,7 @@ const state = {
   maxSpellSlots:  0,
   spentSlots:     0,   // number of spent spell slots (tapped)
   currency:       0,   // single-number currency, mirrors HP design
+  notesBody:      '',  // current saved body of the player .md (markdown)
 
   // Session state
   sessionActive:  false,
@@ -351,6 +354,13 @@ function loadCharacter() {
   renderSpellSlots();
   renderPerks();
   renderCurrency();
+
+  // Player notes: cache the body that came in with the parsed .md and
+  // render it to the read-only view. fm._body is set by parseFrontmatter
+  // (see shared/github-api.js) — that's the source.
+  state.notesBody = (fm && typeof fm._body === 'string') ? fm._body : '';
+  renderPlayerNotesView();
+  closePlayerNotesEditor();
 
   // Show a placeholder in the card grids until we know whether to render from
   // GitHub (session inactive) or wait for Firebase (session active).
@@ -1045,6 +1055,144 @@ async function saveCurrencyToGitHub() {
     state.fm           = fm;
   } catch (e) {
     console.error('Currency save failed:', e);
+  }
+}
+
+// =====================================================
+// PLAYER NOTES
+// =====================================================
+//
+// Editable markdown stored in the BODY of the player .md file (the part
+// after the YAML frontmatter). Three pre-populated section headers —
+// Non-Card Items, Background, Notes — for thematic items that don't have
+// card representations, character history, and session jotting.
+//
+// Read-only by default; click Edit to swap the rendered view for a
+// textarea + format toolbar; click Save to write back to GitHub.
+//
+// Editable any time (no session-active gate) since notes are personal
+// and don't sync via Firebase. The save reads the .md fresh, replaces
+// only the body, and writes back — that way HP/currency writes from
+// elsewhere (which run async on their own debounce) can't clobber the
+// notes payload, and vice versa.
+
+const NOTES_TEMPLATE = `## Non-Card Items
+
+## Background
+
+## Notes
+`;
+
+/**
+ * Renders the saved notes body into the read-only view div.
+ * Falls back to the template (so empty-notes characters get a head
+ * start) when nothing has been saved yet.
+ */
+function renderPlayerNotesView() {
+  const view = document.getElementById('player-notes-view');
+  if (!view) return;
+  const body = (state.notesBody || '').trim();
+  if (!body) {
+    view.innerHTML = '<p class="player-notes-view-empty">No notes yet — click Edit to add some.</p>';
+    return;
+  }
+  view.innerHTML = renderMarkdown(body);
+}
+
+/**
+ * Switches the notes panel into edit mode: textarea visible (populated
+ * from the current saved body, OR the template when empty so the
+ * player gets the three section headers prepared), toolbar visible,
+ * Save+Cancel visible, Edit hidden.
+ */
+function openPlayerNotesEditor() {
+  const view     = document.getElementById('player-notes-view');
+  const ta       = document.getElementById('player-notes-textarea');
+  const toolbar  = document.getElementById('player-notes-toolbar');
+  const editBtn  = document.getElementById('btn-notes-edit');
+  const saveBtn  = document.getElementById('btn-notes-save');
+  const cancelBtn = document.getElementById('btn-notes-cancel');
+  if (!view || !ta) return;
+
+  ta.value = (state.notesBody && state.notesBody.trim()) ? state.notesBody : NOTES_TEMPLATE;
+  view.style.display    = 'none';
+  ta.style.display      = '';
+  if (toolbar)   toolbar.style.display   = 'flex';
+  if (editBtn)   editBtn.style.display   = 'none';
+  if (saveBtn)   saveBtn.style.display   = '';
+  if (cancelBtn) cancelBtn.style.display = '';
+  ta.focus();
+}
+
+/**
+ * Switches the notes panel out of edit mode (read-only view visible
+ * again). Used by Cancel and at the end of a successful Save.
+ */
+function closePlayerNotesEditor() {
+  const view     = document.getElementById('player-notes-view');
+  const ta       = document.getElementById('player-notes-textarea');
+  const toolbar  = document.getElementById('player-notes-toolbar');
+  const editBtn  = document.getElementById('btn-notes-edit');
+  const saveBtn  = document.getElementById('btn-notes-save');
+  const cancelBtn = document.getElementById('btn-notes-cancel');
+  if (view) view.style.display    = '';
+  if (ta)   ta.style.display      = 'none';
+  if (toolbar)   toolbar.style.display   = 'none';
+  if (editBtn)   editBtn.style.display   = '';
+  if (saveBtn)   saveBtn.style.display   = 'none';
+  if (cancelBtn) cancelBtn.style.display = 'none';
+}
+
+/**
+ * Persists the textarea content as the new body of the player .md.
+ *
+ * Reads the .md fresh, parses it, REPLACES ONLY the body (`_body`
+ * field), and writes back. That way any other writer (HP debounce,
+ * currency debounce) racing in parallel can't have its frontmatter
+ * changes clobbered by us — we keep their fields intact.
+ *
+ * Save button shows "Saving…" while in flight. On success, refresh
+ * the view from the new body and close the editor. On failure, leave
+ * the editor open so the player can retry.
+ */
+async function savePlayerNotes() {
+  const ta      = document.getElementById('player-notes-textarea');
+  const saveBtn = document.getElementById('btn-notes-save');
+  if (!ta || !saveBtn) return;
+  if (!state.characterPath) {
+    alert('No character loaded — cannot save notes.');
+    return;
+  }
+
+  const newBody = ta.value;
+  const originalLabel = saveBtn.textContent;
+  saveBtn.disabled    = true;
+  saveBtn.textContent = 'Saving…';
+
+  try {
+    // Re-read the .md fresh so we keep up-to-date frontmatter alongside
+    // our new body. parseFrontmatter returns the parsed YAML map plus
+    // _body; we override _body with the player's input and re-serialise.
+    const { content, sha } = await readFile(state.characterPath);
+    const fm = parseFrontmatter(content);
+    fm._body = newBody;
+    const { sha: newSha } = await writeFile(
+      state.characterPath,
+      serialiseFrontmatter(fm),
+      `Update notes for ${fm.name || state.characterSlug}`,
+      sha
+    );
+    state.characterSha = newSha;
+    state.fm           = fm;
+    state.notesBody    = newBody;
+    renderPlayerNotesView();
+    closePlayerNotesEditor();
+  } catch (e) {
+    console.error('Notes save failed:', e);
+    alert('Could not save notes: ' + (e.message || e));
+  } finally {
+    saveBtn.disabled    = false;
+    saveBtn.textContent = originalLabel;
   }
 }
 
@@ -4561,6 +4709,20 @@ document.addEventListener('DOMContentLoaded', () => {
       logout();
     });
   }
+
+  // Player notes — Edit / Save / Cancel + format toolbar.
+  const notesEditBtn   = document.getElementById('btn-notes-edit');
+  const notesSaveBtn   = document.getElementById('btn-notes-save');
+  const notesCancelBtn = document.getElementById('btn-notes-cancel');
+  if (notesEditBtn)   notesEditBtn.addEventListener('click', openPlayerNotesEditor);
+  if (notesSaveBtn)   notesSaveBtn.addEventListener('click', savePlayerNotes);
+  if (notesCancelBtn) notesCancelBtn.addEventListener('click', closePlayerNotesEditor);
+  // Wire the shared format toolbar to the notes textarea. Resolves the
+  // textarea on every click so swapping it doesn't need a re-wire.
+  wireFormatToolbar(
+    document.getElementById('player-notes-toolbar'),
+    () => document.getElementById('player-notes-textarea')
+  );
 
   // Arrange Cards overlay buttons
   document.getElementById('btn-arrange-cards').addEventListener('click', () => {

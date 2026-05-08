@@ -26,4 +26,8 @@ card_order:
 
 # Fat Tony (Tony)
 
-*Notes about this character go here.*
+## Non-Card Items
+
+## Background
+
+## Notes

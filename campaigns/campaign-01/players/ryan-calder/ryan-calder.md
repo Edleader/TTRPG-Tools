@@ -26,4 +26,8 @@ card_order:
 
 # Ryan Calder (Gibbo)
 
-*Notes about this character go here.*
+## Non-Card Items
+
+## Background
+
+## Notes

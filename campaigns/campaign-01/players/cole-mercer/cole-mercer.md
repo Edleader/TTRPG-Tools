@@ -28,4 +28,8 @@ card_order:
 
 # Cole Mercer (Andrew)
 
-*Notes about this character go here.*
+## Non-Card Items
+
+## Background
+
+## Notes

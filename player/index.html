@@ -250,6 +250,61 @@
       </div>
     </section>
 
+    <!-- ── PLAYER NOTES ─────────────────────────────
+         Editable markdown stored in the body of the player's .md file
+         (after the YAML frontmatter). Three pre-populated section
+         headers — Non-Card Items, Background, Notes — for tracking
+         thematic items that don't have card representations, plus
+         freeform character history and session notes.
+
+         Read-only by default; click Edit to enter the textarea, click
+         Save to write back to GitHub. Editable any time (no session-
+         active gate) since notes are personal, not synced state. -->
+    <section class="sheet-section player-notes-section">
+      <div class="player-notes-header">
+        <span class="section-header section-header-inline">Player Notes</span>
+        <button class="btn btn-sm" id="btn-notes-edit">Edit</button>
+        <button class="btn btn-sm" id="btn-notes-save"   style="display:none">Save</button>
+        <button class="btn btn-sm btn-secondary" id="btn-notes-cancel" style="display:none">Cancel</button>
+      </div>
+
+      <!-- Format toolbar — only visible while editing. Buttons mirror
+           the DM editor's set; data-action values handled by the
+           shared formatToolbar.applyFormatAction. -->
+      <div id="player-notes-toolbar" class="format-toolbar player-notes-toolbar" style="display:none">
+        <div class="format-toolbar-group">
+          <button class="fmt-btn" data-action="h1" title="Heading 1">H1</button>
+          <button class="fmt-btn" data-action="h2" title="Heading 2">H2</button>
+          <button class="fmt-btn" data-action="h3" title="Heading 3">H3</button>
+        </div>
+        <div class="format-toolbar-sep"></div>
+        <div class="format-toolbar-group">
+          <button class="fmt-btn" data-action="bold"          title="Bold"><strong>B</strong></button>
+          <button class="fmt-btn" data-action="italic"        title="Italic"><em>I</em></button>
+          <button class="fmt-btn" data-action="strikethrough" title="Strikethrough"><del>S</del></button>
+        </div>
+        <div class="format-toolbar-sep"></div>
+        <div class="format-toolbar-group">
+          <button class="fmt-btn" data-action="ul"         title="Bullet list">&#8226; List</button>
+          <button class="fmt-btn" data-action="ol"         title="Numbered list">1. List</button>
+          <button class="fmt-btn" data-action="blockquote" title="Blockquote">&ldquo; Quote</button>
+          <button class="fmt-btn" data-action="hr"         title="Divider">&#8212; Rule</button>
+        </div>
+        <div class="format-toolbar-sep"></div>
+        <div class="format-toolbar-group">
+          <button class="fmt-btn" data-action="table" title="Insert table">&#9776; Table</button>
+        </div>
+      </div>
+
+      <!-- Read-only rendered view (shown by default). Populated from
+           the .md body via renderMarkdown() at character load. -->
+      <div id="player-notes-view"     class="player-notes-view"></div>
+
+      <!-- Editable textarea (shown while Edit mode is active). -->
+      <textarea id="player-notes-textarea" class="player-notes-textarea" style="display:none"
+                spellcheck="true"></textarea>
+    </section>
+
     <!-- ── LOGOUT ─────────────────────────────────── -->
     <div class="logout-row">
       <button class="btn btn-logout" id="btn-logout">Switch Character</button>

@@ -27,4 +27,8 @@ card_order:
 
 # Baldrick "Ballsy" Kensington III (Ben)
 
-*Notes about this character go here.*
+## Non-Card Items
+
+## Background
+
+## Notes

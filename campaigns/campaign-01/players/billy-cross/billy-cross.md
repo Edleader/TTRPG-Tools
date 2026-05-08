@@ -26,4 +26,8 @@ card_order:
 
 # Billy "The Arrow" Cross (Davo)
 
-*Notes about this character go here.*
+## Non-Card Items
+
+## Background
+
+## Notes
