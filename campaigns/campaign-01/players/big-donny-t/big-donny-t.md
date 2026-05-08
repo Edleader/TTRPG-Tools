@@ -23,9 +23,10 @@ card_order:
   - campaigns/campaign-01/players/big-donny-t/cards/slingshot.md
   - campaigns/campaign-01/players/big-donny-t/cards/hold-the-line.md
   - campaigns/campaign-01/players/big-donny-t/cards/baseball-bat-2.md
-  - campaigns/campaign-01/players/big-donny-t/cards/motorcycle-helmet.md
   - campaigns/campaign-01/players/big-donny-t/cards/bull-rush.md
-  - campaigns/campaign-01/players/big-donny-t/cards/hunting-rifle.md
+  - campaigns/campaign-01/cards/armour/padded-jacket.md
+  - campaigns/campaign-01/cards/weapons/hunting-rifle.md
+  - campaigns/campaign-01/players/big-donny-t/cards/motorcycle-helmet.md
 ---
 
 # Big Donny T (Matt)
