@@ -11,10 +11,12 @@ active_slots: 4
 hand_slots: 4
 swap_lock: locked
 swaps_remaining: 0
-perk_5:
-perk_10:
-perk_17:
+perk_5: ""
+perk_10: ""
+perk_17: ""
 currency: 0
+hp_current: 20
+spell_slots_spent: 0
 ---
 
 # Cole Mercer (Andrew)
