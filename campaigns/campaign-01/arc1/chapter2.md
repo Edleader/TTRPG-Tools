@@ -6,7 +6,15 @@ title: Charlotte / The Fuel Run
 status: in-progress
 players_level: 1
 combat:
-  - label: The Scavengers (fuel station)
+  - label: The Purists (Just in case we need it)
+    enemies:
+      - name: Purist Grunt
+        hp: 12
+        count: 4
+        attack: 1+d4 (kitchen knife)
+        roll: 12
+        notes: March straight at Donny shouting. Will not be intimidated. Want him dead.  
+- label: The Scavengers (fuel station)
     enemies:
       - name: Scavenger (knife)
         hp: 15
@@ -207,13 +215,9 @@ They want the fuel. They will fight for it.
 
 **This is the live hazard for this fight. Read carefully.**
 
-If the party **drop the hand pump mid-fight to engage** — for example, the player operating it lets go to grab a weapon — the GM should narrate the pump head clattering to the concrete. Critically: **the underground tank they opened is petrol, not diesel.** *(They went for the wrong cap, or for whatever reason are pumping unleaded — see below.)*
+If the party **drop the hand pump mid-fight to engage** — for example, the player operating it lets go to grab a weapon — the GM should narrate the pump head clattering to the concrete.
 
-> *"The hose flops loose. There's a wet hiss as fuel keeps siphoning, and a puddle starts spreading across the forecourt. The smell hits you immediately — sharp, sweet, eye-watering. That's not diesel. That's petrol."*
-
-**GM setup options for why the tank is petrol:**
-- **Easiest:** the diesel cap is jammed/stuck/frozen with rust, so the party tried unleaded next and got it open first. This is the recommended framing — gives the players a reason to be at the petrol cap, makes the leak feel earned rather than arbitrary.
-- **Alternative:** the labels are faded enough that they misread which cap they opened. Reveal the moment fuel hits the ground.
+> *"The hose flops loose. There's a wet hiss as fuel keeps siphoning, and a puddle starts spreading across the forecourt. The smell hits you immediately — sharp, sweet, eye-watering."*
 
 **What the leak does:**
 - Within the first round of the pump being dropped, petrol spreads roughly 3–4m around the access cap.
@@ -223,8 +227,6 @@ If the party **drop the hand pump mid-fight to engage** — for example, the pla
 - **The fuel is not infinite.** After 3 rounds of unattended leak, the tank pressure drops and the leak slows to a trickle. The party can still pump from it after the fight, but they've lost maybe 15-20 litres of capacity.
 
 **If the pump is held throughout:** no leak. The fight is harder because someone has to keep pumping — but the party keeps the full fuel haul.
-
-**Possible complication regardless:** the pump jams mid-fight. A Might roll (difficulty −1) or a creative mechanical solution fixes it. Not dangerous on its own — just a clock that compounds the staffing problem.
 
 ---
 
@@ -243,7 +245,7 @@ This is **player-driven** — there are no padlocks lying around, no convenient 
 - **The shopfront interior** — gutted, but if a player goes in to rummage: cleaning supplies under the counter, a roll of black gaffer tape, a length of chain (1.5m, the kind used to lock down a roller-shutter at night). **No padlock.** The chain is useful as raw material — it can be wound through the cap handle and tied off, or fed through a wedged piece of rebar to function as a makeshift lock.
 - **The air-pump bay** — there's a coiled length of rubber hose and a small toolkit bolted to the wall. The toolkit has been raided but a flat-blade screwdriver and a pair of mole grips are still in it.
 - **Spray paint** — a half-empty can of black spray paint sits on top of one of the wheelie bins (presumably from whoever painted UNNATURAL. LEAVE earlier). Could be used to paint over the faded UNLEADED / DIESEL / PREMIUM stencils so future scavengers can't tell which cap is which.
-- **The faded stencils themselves** — a clever party might paint over them, or repaint them wrong (mark the diesel cap as EMPTY, etc.) to mislead anyone who does come looking.
+- **The faded stencils themselves** — a clever party might paint over them, or repaint them wrong (mark them as EMPTY, etc.) to mislead anyone who does come looking.
 
 **What the party cannot do:**
 - They cannot make the forecourt look like *not a service station.* That ship has sailed.
@@ -264,7 +266,7 @@ If the party doesn't think to do this on their own, **prompt them via Charlotte'
 
 ## Section 3 — The Long Way Home
 
-The walk back is heavier — 60 litres of diesel in containers is real weight, distributed across the group. The streets are warming up; the suburb is starting to move. They are tired.
+The walk back is heavier — 60 litres of diesel in containers is real weight, distributed across the group. The streets are warming up as it nears midday.
 
 They retrace their route. They reach the underpass.
 
@@ -276,9 +278,9 @@ They retrace their route. They reach the underpass.
 
 That's the first wrong note.
 
-The second is the three figures already standing in the middle of the underpass, waiting. They were not here when the party came through this morning. They have been waiting a while.
+*Not seen until half way into tunnel* The second is the three figures already standing in the middle of the underpass, waiting. They were not here when the party came through this morning. They have been waiting a while.
 
-Three men. Big. **Tattoos on their forearms and necks. Long hair on at least two of them. Leather. Beards.** No armbands. No symbols. Whatever they are, they are not Purists.
+Three men. Big. **Tattoos on their forearms and necks. Long hair on at least two of them. Leather. Beards.** No armbands. No symbols. Whatever they are, they are not the same people they ran into earlier.
 
 The one in the middle locks eyes on **Big Donny T** the moment Donny steps into the tunnel. He pushes off the wall. He doesn't say anything yet. He just starts walking forward — fast, steady — and the other two fall in beside him.
 
@@ -286,7 +288,7 @@ Then he grins.
 
 > *"Look who it fucking is."*
 
-The one on his left, drawing a knife from his belt:
+The one on his left draws a knife from his belt:
 
 > *"We thought we'd lost you, mate."*
 
@@ -310,7 +312,6 @@ They are not negotiating. They are not slowing down. They are not interested in 
 - **Might 12, Finesse 12, 20 HP each.** Roll under 12 to hit.
 - **Kitchen knife** — Simple −1, 1+d4 damage. Melee.
 - **Tactics:** all three converge on Donny. They will ignore other players unless directly engaged or blocked. If a non-Donny player attacks them, that bikie will turn and engage them, but the other two keep pressing toward Donny.
-- **Will they retreat?** Only if all three are below half HP simultaneously, AND Donny is still standing. Otherwise they fight to the death. They came here for him.
 
 **Tunnel geography (use this in play):**
 - The underpass is **roughly 40m long, walls either side, low ceiling, dim in the middle.** No real cover beyond the overturned trolley. There is nowhere for the party to flee sideways — only forward (back toward home) or backward (back toward the service station).
@@ -331,21 +332,25 @@ They are not negotiating. They are not slowing down. They are not interested in 
 
 The walk the rest of the way back is short, but the mood is different from the morning.
 
-Darren receives the fuel with something close to relief, though he doesn't perform it. He gets straight to filling the generator. If the party tells him about the tank lockoff plan, he listens carefully, nods, asks one or two practical questions, and looks genuinely impressed. **Mara, when she hears, simply says:** *"Good."* That is high praise.
+Darren receives the fuel with something close to relief, though he doesn't perform it. He gets straight to filling the generator. If the party tells him about the tank lockoff plan, he listens carefully, nods, asks one or two practical questions, and looks genuinely impressed. **Mara, when she hears, simply says:** *"Good."* That is high praise. Darren asks *"Any other stories from you adventures?"*
 
 If the party tells either of them about the bikies, both go quiet for a beat. Mara doesn't pry.
 
+> *"Just keep any of your own shit outside of this place."*
+
+After a brief pause, she continues:
+
 > *"You all right? All of you?"*
 
-She means it for everyone, but she's looking at Donny when she says it.
+It feels like she means it, but she's looking at Donny when she says it if the party told her what went on.
 
-**Charlotte moment:** when the party come back, Charlotte is helping Mara stack tins — quietly, without being asked. She hears them come in and doesn't look up immediately. Then:
+**Charlotte moment:** when the party come back, Charlotte is drawing quietly. When she notices that the party is back, the jumps up and runs over to them. Then:
 
-> *"Did you find it?"*
+> *"I was beginning to think you weren't going to come back!"*
 
 Whoever answers, she nods. Goes back to what she was doing.
 
-**If anyone asks what she's drawing:** she shows them. More symbols — different arrangement, same kind of dense precision. She says she sees them when she closes her eyes. She doesn't know what they mean. She seems unbothered by this in the way a child is unbothered by things they don't have context for yet.
+**Players catch a glimpse of what she was drawing:** she shows them. More symbols — different arrangement, same kind of dense precision. She says she sees them when she closes her eyes. She doesn't know what they mean. She seems unbothered by this in the way a child is unbothered by things they don't have context for yet. None of the party can make sense of these symbols... for now. *If they choose to ask to keep a copy, we can use this later.*
 
 ---
 
