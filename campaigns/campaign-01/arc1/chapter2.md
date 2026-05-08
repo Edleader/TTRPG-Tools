@@ -53,7 +53,7 @@ The session opens before dawn — the morning after Chapter 1.
 
 The community centre is quiet. The generator has been running since yesterday and Darren has been watching the gauges. He pulls the party aside early, before most of the residents are awake.
 
-> *"We've got maybe two days of fuel left. After that, no lights, no power for the hot plates. I know where we might be able to get more — there's a service station not far from here, near the old train station end of the suburb. It had underground diesel tanks. If no one's drained them already, there could be hundreds of litres down there. The problem is you need a hand pump and pipe to get at it, and I can't leave Mara to deal with this place alone. Could you go?"*
+> *"We've got maybe two days of fuel left. After that, no lights, no power for the hot plates. I know where we might be able to get more — there's a service station not far from here, near the old train station end of the suburb. It had underground storage tanks. If no one's drained them already, there could be hundreds of litres down there. The problem is you need a hand pump and pipe to get at it, and I can't leave Mara to deal with this place alone. Could you go?"*
 
 He hands them a hand pump salvaged from a hardware store and a length of rubber hose. He also has three large plastic containers — they can carry about 60 litres on foot between the group.
 
@@ -173,13 +173,13 @@ The party can look at it and move on. Do not explain it. Just make it visible.
 
 > *Out the back of the forecourt, behind the building, you can see the air-pump bay and a row of three sad-looking parking bays. A wrecked sedan sits in one of them, bonnet up, engine half-pulled-out — someone tried to salvage something and gave up. There are two industrial wheelie bins, one tipped on its side. A stack of old tyres. A skip half-full of construction rubble — broken concrete, a length of rebar, twisted aluminium guttering. Weeds coming up between the paving slabs.*
 
-> *In the centre of the forecourt floor — between the two rows of pumps — is a flush metal access cap, about the size of a dinner plate, with a recessed lifting handle. Heavy-duty padlock through the handle. The cap reads UNLEADED on a faded stencil. There are two more caps further along the row — DIESEL and PREMIUM. Same kind of lock on each."*
+> *In the centre of the forecourt floor — between the two rows of pumps — is a flush metal access panel, about the size of a dinner plate, with a recessed lifting handle. Heavy-duty padlock through the handle. The cap reads UNLEADED on a faded stencil. There are two more caps further along the row — PREMIUM and DIESEL. Same kind of lock on each."*
 
-**GM note (read for context, do not narrate):** there are three underground tanks. Diesel is what Darren asked for. The other two (unleaded petrol, premium petrol) are still full or nearly so — *this matters for the scavenger encounter and for what the community gets long-term*. The padlocks are old, rusted, and not strong; they're a deterrent, not a real barrier.
+**GM note (read for context, do not narrate):** there are three underground tanks. Fuel is what Darren asked for. The other two (premium petrol and diesel) are still full or nearly so — *this matters for the scavenger encounter and for what the community gets long-term*. The padlocks are old, rusted, and not strong; they're a deterrent, not a real barrier.
 
 **The lock:** Bolt cutters will cut it cleanly (Might roll, difficulty −2). A careful approach to the mechanism (Finesse roll, difficulty −2) can pick the access cap. The padlock is rusted — a determined player can force it with the right tool.
 
-**Once opened:** the diesel tank has fuel. Not full, but substantial — easily enough to fill the three containers and more besides. The hand pump works with some effort. Pumping 60 litres takes about 15–20 minutes of steady work.
+**Once opened:** the unleaded tank has fuel. Not full, but substantial — easily enough to fill the three containers and more besides. The hand pump works with some effort. Pumping 60 litres takes about 15–20 minutes of steady work.
 
 ---
 
