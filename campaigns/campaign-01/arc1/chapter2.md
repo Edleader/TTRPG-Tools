@@ -96,13 +96,13 @@ She has been outside all night.
 
 Before the party head out, Charlotte approaches whoever seems least intimidating. She holds out a torn piece of paper without making eye contact.
 
-It's covered in symbols — dense, precise, Cole and Big Donny T recognise the core of the symbols match what they use to cast "Lung Constriction". The symbols are arranged in a pattern that has clearly been drawn and redrawn many times. This one is a clean copy.
+It's covered in symbols — dense, precise, intentional. The symbols are arranged in a pattern that has clearly been drawn and redrawn many times. This one is a clean copy.
 
 > *"I drew it from a dream. I don't know what it is. You can have it if you want."*
 
 She goes back to her corner. She does not explain further.
 
-**GM note:** This is a functional spell scrap — Lung Constriction. If two players already have this spell, they will recognise it immediately. Charlotte has a second copy in her notebook that she is keeping.
+**GM note:** This is a functional spell scrap — Cole and Big Donny T recognise the core of the symbols match what they use to cast "Lung Constriction". Charlotte has a second copy in her notebook that she is keeping.
 
 **If the party recognise the scrap and try to take the one Charlotte is keeping:**
 She will scrunch the copy in her hand, pull it to her chest, and say:
