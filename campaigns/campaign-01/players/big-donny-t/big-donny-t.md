@@ -23,7 +23,6 @@ card_order:
   - campaigns/campaign-01/players/big-donny-t/cards/compound-bow-2.md
   - campaigns/campaign-01/players/big-donny-t/cards/field-medkit.md
   - campaigns/campaign-01/players/big-donny-t/cards/lighter.md
-  - campaigns/campaign-01/players/big-donny-t/cards/static-discharge.md
 ---
 
 # Big Donny T (Matt)
