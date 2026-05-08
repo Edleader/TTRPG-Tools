@@ -17,6 +17,11 @@ perk_17: ""
 currency: 0
 hp_current: 22
 spell_slots_spent: 0
+card_order:
+  - campaigns/campaign-01/cards/weapons/compound-bow.md
+  - campaigns/campaign-01/cards/weapons/dagger.md
+  - campaigns/campaign-01/cards/abilities/shadow-step.md
+  - campaigns/campaign-01/cards/spells/muscle-cramp.md
 ---
 
 # Billy "The Arrow" Cross (Davo)
