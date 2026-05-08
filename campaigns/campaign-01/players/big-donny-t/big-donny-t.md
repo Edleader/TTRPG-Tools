@@ -17,7 +17,11 @@ perk_17: ""
 hp_current: 28
 spell_slots_spent: 0
 currency: 0
-card_order: []
+card_order:
+  - campaigns/campaign-01/cards/weapons/baseball-bat.md
+  - campaigns/campaign-01/cards/weapons/wrench.md
+  - campaigns/campaign-01/cards/spells/lung-constriction.md
+  - campaigns/campaign-01/cards/spells/static-discharge.md
 ---
 
 # Big Donny T (Matt)
