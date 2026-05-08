@@ -21,8 +21,10 @@ card_order:
   - campaigns/campaign-01/players/baldrick-kensington/cards/baseball-bat.md
   - campaigns/campaign-01/players/baldrick-kensington/cards/compound-bow.md
   - campaigns/campaign-01/players/baldrick-kensington/cards/focussed-disarm.md
-  - campaigns/campaign-01/cards/abilities/taunt.md
-  - campaigns/campaign-01/cards/abilities/bull-rush.md
+  - campaigns/campaign-01/cards/abilities/shadow-step.md
+  - campaigns/campaign-01/cards/abilities/guard.md
+  - campaigns/campaign-01/players/baldrick-kensington/cards/bull-rush.md
+  - campaigns/campaign-01/players/baldrick-kensington/cards/taunt.md
 ---
 
 # Baldrick "Ballsy" Kensington III (Ben)
