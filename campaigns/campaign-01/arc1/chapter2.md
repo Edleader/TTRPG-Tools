@@ -61,7 +61,11 @@ The session opens before dawn — the morning after Chapter 1.
 
 The community centre is quiet. The generator has been running since yesterday and Darren has been watching the gauges. He pulls the party aside early, before most of the residents are awake.
 
-> *"We've got maybe two days of fuel left. After that, no lights, no power for the hot plates. I know where we might be able to get more — there's a service station not far from here, near the old train station end of the suburb. It had underground storage tanks. If no one's drained them already, there could be hundreds of litres down there. The problem is you need a hand pump and pipe to get at it, and I can't leave Mara to deal with this place alone. Could you go?"*
+> *"We've got maybe two days of fuel left. After that, no lights, no power for the hot plates. I know where we might be able to get more — there's a service station not far from here, near the old train station end of the suburb. It had underground storage tanks."*
+
+He pauses for a beat, like he wants to make sure he's clear.
+
+> *"Petrol. The generator runs on petrol. If no one's drained the tanks already, there could be hundreds of litres down there. The problem is you need a hand pump and pipe to get at it, and I can't leave Mara to deal with this place alone. Could you go?"*
 
 He hands them a hand pump salvaged from a hardware store and a length of rubber hose. He also has three large plastic containers — they can carry about 60 litres on foot between the group.
 
@@ -266,7 +270,7 @@ If the party doesn't think to do this on their own, **prompt them via Charlotte'
 
 ## Section 3 — The Long Way Home
 
-The walk back is heavier — 60 litres of diesel in containers is real weight, distributed across the group. The streets are warming up as it nears midday.
+The walk back is heavier — 60 litres of petrol in containers is real weight, distributed across the group. The streets are warming up as it nears midday.
 
 They retrace their route. They reach the underpass.
 
