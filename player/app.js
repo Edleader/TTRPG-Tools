@@ -1290,10 +1290,14 @@ async function fbInventoryUpdate(slug, fbKey, patch) {
  * offered / community are mirrors of Firebase state — published trade pool.
  */
 const _trade = {
-  offered:             [],   // own offers (mirrored from Firebase)
-  community:           [],   // others' offers (mirrored from Firebase)
-  _initialSlotByPath:  null, // Map<path,slot> snapshotted on overlay open
+  offered:             [],          // own offers (mirrored from Firebase)
+  community:           [],          // others' offers (mirrored from Firebase)
+  _initialSlotByPath:  null,        // Map<path,slot> snapshotted on overlay open
   _fbUnsub:            null,
+  // Cards staged for permanent discard. Persistent within an open trade
+  // overlay (player can drag back out before close). Committed on close
+  // — files removed from FB inventory then GitHub via reconcile.
+  discardPaths:        new Set(),
 };
 
 /**
@@ -1346,24 +1350,39 @@ function subscribeTradePool() {
 /**
  * Returns the cards currently in this player's Active zone (within the
  * trade overlay's perspective): inventory cards with player_slot 'active',
- * minus any currently offered.
+ * minus any currently offered AND minus any staged for discard.
  */
 function tradeYoursActive() {
   const offeredPaths = new Set(_trade.offered.map(c => c.cardPath));
   return state.inventory.filter(c =>
-    c._path && cardSlot(c) === 'active' && !offeredPaths.has(c._path)
+    c._path && cardSlot(c) === 'active'
+      && !offeredPaths.has(c._path)
+      && !_trade.discardPaths.has(c._path)
   );
 }
 
 /**
  * Returns the cards currently in this player's Hand zone (within the
  * trade overlay's perspective): inventory cards with player_slot 'hand',
- * minus any currently offered.
+ * minus any currently offered AND minus any staged for discard.
  */
 function tradeYoursHand() {
   const offeredPaths = new Set(_trade.offered.map(c => c.cardPath));
   return state.inventory.filter(c =>
-    c._path && cardSlot(c) === 'hand' && !offeredPaths.has(c._path)
+    c._path && cardSlot(c) === 'hand'
+      && !offeredPaths.has(c._path)
+      && !_trade.discardPaths.has(c._path)
+  );
+}
+
+/**
+ * Returns inventory cards currently staged for discard (in the Discard
+ * zone of the trade overlay). Discard is a persistent zone within an
+ * open overlay — player can drag cards back out before close.
+ */
+function tradeYoursDiscard() {
+  return state.inventory.filter(c =>
+    c._path && _trade.discardPaths.has(c._path)
   );
 }
 
@@ -1376,6 +1395,8 @@ function openTradeOverlay() {
   _trade._initialSlotByPath = new Map(
     state.inventory.map(c => [c._path, cardSlot(c)])
   );
+  // Discard zone is per-overlay-session — start empty every time.
+  _trade.discardPaths = new Set();
 
   renderTradeYoursZones();
   renderTradeCommunity();
@@ -1390,8 +1411,13 @@ function openTradeOverlay() {
  *   - cards are still in Your Offer (must retract or wait for claim), or
  *   - Active/Hand counts exceed slot limits.
  *
- * On successful close, persists any Active↔Hand rearrangements back to GitHub
- * so the inventory matches what the player saw in the trade UI.
+ * On successful close:
+ *   - Discarded cards (in the Discard zone) are removed from inventory.
+ *   - Any Active↔Hand rearrangements are persisted.
+ *
+ * Discard fires before the slot-rearrangement persistence so that an
+ * Active→Hand move on a card that's also in Discard doesn't write a
+ * pointless slot update right before the delete.
  */
 async function closeTradeOverlay() {
   if (_trade.offered.length > 0) {
@@ -1403,11 +1429,27 @@ async function closeTradeOverlay() {
     return;
   }
 
+  // Confirm any pending discards. We require explicit OK so a fat-fingered
+  // drop doesn't silently destroy an item.
+  const discardCards = tradeYoursDiscard();
+  if (discardCards.length > 0) {
+    const names = discardCards.map(c => c.name).join('", "');
+    if (!confirm(`This will permanently discard "${names}". Are you sure?`)) {
+      return;
+    }
+  }
+
   const closeBtn = document.getElementById('btn-trade-close');
   closeBtn.disabled    = true;
   closeBtn.textContent = 'Saving…';
 
   try {
+    // Commit discards first so persistTradeReorderings doesn't waste a
+    // slot-update API call on a card that's about to be deleted anyway.
+    for (const card of discardCards) {
+      await removeCardFromInventory(card,
+        `Discard ${card.name} from ${state.characterSlug}`);
+    }
     await persistTradeReorderings();
   } catch (e) {
     alert('Could not save card arrangement: ' + e.message);
@@ -1429,6 +1471,7 @@ async function closeTradeOverlay() {
   closeBtn.disabled    = false;
   closeBtn.textContent = 'Close';
   _trade._initialSlotByPath = null;
+  _trade.discardPaths       = new Set();
 }
 
 /**
@@ -1497,23 +1540,26 @@ async function persistTradeReorderings() {
 }
 
 /**
- * Renders both Your Cards zones (Active + Hand) plus their headers.
+ * Renders both Your Cards zones (Active + Hand) plus their headers,
+ * and the Discard zone.
  */
 function renderTradeYoursZones() {
   const fm        = state.fm;
   const maxActive = fm.active_slots || 4;
   const maxHand   = fm.hand_slots   || 4;
 
-  const active = tradeYoursActive();
-  const hand   = tradeYoursHand();
+  const active  = tradeYoursActive();
+  const hand    = tradeYoursHand();
+  const discard = tradeYoursDiscard();
 
   document.getElementById('trade-active-header').textContent =
     `Active Slots (${active.length} / ${maxActive})`;
   document.getElementById('trade-hand-header').textContent =
     `Hand (${hand.length} / ${maxHand})`;
 
-  renderTradeYoursZone('trade-active-zone', active);
-  renderTradeYoursZone('trade-hand-zone',   hand);
+  renderTradeYoursZone('trade-active-zone',  active);
+  renderTradeYoursZone('trade-hand-zone',    hand);
+  renderTradeYoursZone('trade-discard-zone', discard);
 }
 
 /**
@@ -1719,20 +1765,60 @@ function handleTradeDragMove({ event, sourceEl }) {
 }
 
 /**
- * Drop handler for the trade overlay. Three valid outcomes:
+ * Drop handler for the trade overlay. Valid outcomes:
  *   1. Dropped over Your Offer → publish the card to the trade pool.
- *   2. Dropped over the OTHER yours-zone (Active↔Hand) → reorder locally,
- *      validating against the native-slot rule.
- *   3. Anywhere else → snap back (no-op).
+ *   2. Dropped over Discard → stage the card for discard on close
+ *      (persistent until close — can be dragged back out).
+ *   3. Dragged out of Discard back to Active/Hand → un-stage.
+ *   4. Active↔Hand reorder/swap → reorder locally, validating native-slot.
+ *   5. Anywhere else → snap back (no-op).
  */
 async function handleTradeDrop({ event, card, fromZone }) {
-  const zoneEls = ['trade-active-zone', 'trade-hand-zone', 'trade-offer-zone']
+  const zoneEls = ['trade-active-zone', 'trade-hand-zone', 'trade-offer-zone', 'trade-discard-zone']
     .map(id => document.getElementById(id))
     .filter(Boolean);
   const droppedOnZone = findZoneAt(event, zoneEls);
 
   if (droppedOnZone === 'offer' && fromZone !== 'offer') {
     await publishTradeOffer(card);
+    return;
+  }
+
+  // Discard staging: drop into Discard from Active/Hand → mark for discard.
+  if (droppedOnZone === 'trade-discard'
+      && (fromZone === 'trade-active' || fromZone === 'trade-hand')) {
+    if (card._path) _trade.discardPaths.add(card._path);
+    renderTradeYoursZones();
+    validateTradeYours();
+    return;
+  }
+
+  // Pull a card OUT of Discard back into Active or Hand. The card's slot
+  // had been unchanged in inventory the whole time; we just remove the
+  // path from the discardPaths set and the renderer puts it back where
+  // it belongs by player_slot. We do honour an explicit Active↔Hand move
+  // here too (e.g. drag from Discard onto Hand even though the card was
+  // marked Active before discard).
+  if (fromZone === 'trade-discard'
+      && (droppedOnZone === 'trade-active' || droppedOnZone === 'trade-hand')) {
+    if (card._path) _trade.discardPaths.delete(card._path);
+    const targetSlot = droppedOnZone === 'trade-active' ? 'active' : 'hand';
+    if (targetSlot === 'active' && (card.slots || 'hand').toLowerCase() === 'hand') {
+      // Hand-only card: silent bounce to hand instead.
+      inventorySetSlot(card._path, 'hand');
+      if (state.sessionActive && card._fbKey) {
+        fbInventoryUpdate(state.characterSlug, card._fbKey, { player_slot: 'hand' })
+          .catch(e => console.warn('FB slot update failed:', e));
+      }
+    } else if (cardSlot(card) !== targetSlot) {
+      inventorySetSlot(card._path, targetSlot);
+      if (state.sessionActive && card._fbKey) {
+        fbInventoryUpdate(state.characterSlug, card._fbKey, { player_slot: targetSlot })
+          .catch(e => console.warn('FB slot update failed:', e));
+      }
+    }
+    renderTradeYoursZones();
+    validateTradeYours();
     return;
   }
 
@@ -1854,6 +1940,38 @@ async function retractTradeOffer(key) {
  *      cleanup or claim release.
  */
 async function claimTradeCard(card) {
+  // Pre-flight space check BEFORE the claim transaction. Count only cards
+  // that will still be ours after a delivery — i.e. exclude:
+  //   - any cards we currently have offered (those are leaving our
+  //     inventory the moment any of those offers gets claimed by anyone),
+  //   - any cards we've staged for discard in this trade overlay (those
+  //     will be removed from inventory on overlay close).
+  // Both legitimately free a slot from the player's perspective. Round-3
+  // T-trade-4 had this fail because we were treating offered cards as
+  // still-occupying their slot.
+  const fm        = state.fm;
+  const maxActive = fm.active_slots || 4;
+  const maxHand   = fm.hand_slots   || 4;
+  const offeredPaths = new Set(_trade.offered.map(c => c.cardPath));
+  const discardPaths = _trade.discardPaths || new Set();
+  const effective = state.inventory.filter(c =>
+    c._path && !offeredPaths.has(c._path) && !discardPaths.has(c._path)
+  );
+  const curActive = effective.filter(c => cardSlot(c) === 'active').length;
+  const curHand   = effective.filter(c => cardSlot(c) === 'hand').length;
+  const hasSpace  = curActive < maxActive || curHand < maxHand;
+
+  if (!hasSpace) {
+    // Bail out BEFORE the claim transaction so we don't take the card off
+    // the pool and then immediately return it. This also prevents the
+    // double-claim case: if a player offers one hand card and tries to
+    // claim two community cards in succession, the second claim sees the
+    // first claim already in `effective` (state.inventory was mutated by
+    // the delivery) and correctly counts no slots free.
+    alert('You don\'t have any free slots. Discard or trade away a card first, then claim again.');
+    return;
+  }
+
   const tradeRef = ref(db, `${firebaseTradePath(state.campaignId)}/${card.key}`);
 
   // Pre-read to catch already-gone cards before the transaction
@@ -1869,14 +1987,6 @@ async function claimTradeCard(card) {
     alert('Someone else claimed that card first.');
     return;
   }
-
-  // Determine slot — use same space-check logic as loot
-  const fm        = state.fm;
-  const maxActive = fm.active_slots || 4;
-  const maxHand   = fm.hand_slots   || 4;
-  const curActive = (state._activeCards || []).length;
-  const curHand   = (state._handCards   || []).length;
-  const hasSpace  = curActive < maxActive || curHand < maxHand;
 
   const preferredSlot = (card.slots || 'hand') === 'active' && curActive < maxActive ? 'active' : 'hand';
 
@@ -1900,31 +2010,24 @@ async function claimTradeCard(card) {
     _isTrade:     true,
   };
 
-  if (hasSpace) {
-    const actualSlot = preferredSlot === 'active' && curActive < maxActive ? 'active'
-                     : curHand < maxHand ? 'hand' : 'active';
-    try {
-      await deliverTradeCardToPlayer(incomingCard, state.characterSlug, actualSlot);
-      // copyCardToInventory inside deliverTradeCardToPlayer already mutated
-      // state.inventory in memory. Refresh the trade overlay's local view if
-      // it's open so the just-claimed card appears in Your Cards immediately.
-      if (isTradeOverlayOpen()) {
-        renderTradeYoursZones();
-        validateTradeYours();
-      }
-    } catch (e) {
-      // Delivery failed — release the claim so the offerer (or another
-      // player) can retry. Log the underlying error so we can debug repeat
-      // failures (the user-facing alert is intentionally short).
-      console.error('Trade-claim delivery failed:', e);
-      alert(`Failed to receive the traded card: ${e?.message || e}`);
-      await releaseTradeClaim(card.key);
+  // Space was confirmed pre-transaction; pick the actual slot now.
+  const actualSlot = preferredSlot === 'active' && curActive < maxActive ? 'active'
+                   : curHand < maxHand ? 'hand' : 'active';
+  try {
+    await deliverTradeCardToPlayer(incomingCard, state.characterSlug, actualSlot);
+    // copyCardToInventory inside deliverTradeCardToPlayer already mutated
+    // state.inventory in memory. Refresh the trade overlay's local view if
+    // it's open so the just-claimed card appears in Your Cards immediately.
+    if (isTradeOverlayOpen()) {
+      renderTradeYoursZones();
+      validateTradeYours();
     }
-  } else {
-    // No space at all — refuse the claim and release it so the offerer (or
-    // another player) can take it. The player needs to free a slot first
-    // (Arrange a card to discard, or offer one of their own to trade away).
-    alert('You don\'t have any free slots. Discard or trade away a card first, then claim again.');
+  } catch (e) {
+    // Delivery failed — release the claim so the offerer (or another
+    // player) can retry. Log the underlying error so we can debug repeat
+    // failures (the user-facing alert is intentionally short).
+    console.error('Trade-claim delivery failed:', e);
+    alert(`Failed to receive the traded card: ${e?.message || e}`);
     await releaseTradeClaim(card.key);
   }
 }
@@ -3079,9 +3182,21 @@ async function gloot_takeBackHolding(card) {
 
   if (!result?.committed) {
     alert('That card was just claimed by someone else.');
+    return;
   }
-  // No local state change needed; renderGroupLoot will re-derive on next
-  // session update.
+
+  // Force an immediate local re-render: the FB onValue listener WILL fire
+  // shortly with the same delete propagated, but its timing isn't
+  // guaranteed relative to runTransaction's promise resolution. Mutating
+  // _gloot.session.holdingPool locally and re-rendering means the card
+  // reappears in Active/Hand the instant the transaction resolves — no
+  // waiting for the round trip. The next listener fire is then a no-op
+  // (same final state). Round-3 T-gloot-8 caught this: card stayed
+  // hidden in trade phase UI after Take Back until next render.
+  if (_gloot.session && _gloot.session.holdingPool) {
+    delete _gloot.session.holdingPool[card.key];
+  }
+  renderGroupLoot();
 }
 
 // ─── Group loot — drag and drop ───────────────────────────────────────────────

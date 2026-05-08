@@ -2135,6 +2135,9 @@ function renderLootSearchResults() {
   for (const card of shown) {
     const div = document.createElement('div');
     div.className = 'loot-result-row';
+    // Hover shows full card details so the DM doesn't have to click into
+    // the card library to see damage/difficulty/effect before staging.
+    div.title = formatCardTooltip(card.fm);
     div.innerHTML = `
       <span class="loot-result-type">${escapeHtml(card.fm.card_type || '')}</span>
       <span class="loot-result-name">${escapeHtml(card.fm.name || '')}</span>
@@ -2208,6 +2211,10 @@ function renderLootStaged() {
   state.lootStaged.forEach((item, idx) => {
     const row = document.createElement('div');
     row.className = 'loot-staged-row';
+    // Hover tooltip: full frontmatter + body, plain text. Lets the DM
+    // mouse over a row to see damage/difficulty/effect/etc. without
+    // having to open the card library separately.
+    row.title = formatCardTooltip(item.fm);
 
     let assignControl;
     if (state.lootMode === 'personal') {
@@ -2245,6 +2252,35 @@ function renderLootStaged() {
       renderLootStaged();
     });
   });
+}
+
+/**
+ * Builds a plain-text tooltip string for a card's full frontmatter + body.
+ * Used as the `title` attribute on staged-loot rows so the DM can hover
+ * to see damage/difficulty/effect without opening the card library.
+ *
+ * Plain text only — the browser's native tooltip doesn't render HTML.
+ * Multiple lines via \n. Skip internal/structural fields.
+ */
+function formatCardTooltip(fm) {
+  const skip = new Set([
+    '_body', '_path', '_sha', 'name', 'card_type',
+  ]);
+  const lines = [];
+  if (fm.name)      lines.push(fm.name);
+  if (fm.card_type) lines.push(`(${fm.card_type})`);
+  for (const [k, v] of Object.entries(fm)) {
+    if (skip.has(k)) continue;
+    if (v === null || v === undefined || v === '') continue;
+    if (typeof v === 'object') continue;
+    const label = k.charAt(0).toUpperCase() + k.slice(1).replace(/_/g, ' ');
+    lines.push(`${label}: ${v}`);
+  }
+  if (fm._body) {
+    lines.push('');
+    lines.push(String(fm._body).trim());
+  }
+  return lines.join('\n');
 }
 
 // =====================================================
@@ -2835,19 +2871,78 @@ async function savePlayerCardOrder(slug, orderedPaths) {
 }
 
 /**
- * Clears the Firebase session inventory nodes for every player after
- * reconcile completes. Called only after the GitHub writes succeed so a
- * mid-flush failure doesn't lose any data.
+ * Clears every transient Firebase node under the campaign after reconcile
+ * completes. Runs only after GitHub writes succeed so a mid-flush failure
+ * doesn't lose any data.
+ *
+ * What gets cleared (everything that's a "this session only" working
+ * surface):
+ *   - per-player inventory (already FB-only mid-session; reconcile copied
+ *     it to GitHub)
+ *   - per-player pending_personal_loot (flushed to GitHub frontmatter by
+ *     flushPendingPersonalLootToGitHub)
+ *   - per-player rest_request (a request only makes sense in a live session)
+ *   - any other ad-hoc per-player session keys we add in future — done by
+ *     deleting the entire `session/{slug}` subtree and immediately re-
+ *     writing only the persistent fields (name + HP + spell stats).
+ *   - campaign-level loot session (group loot — last-committer or
+ *     force-close usually deletes this, but belt-and-braces here)
+ *   - campaign-level trades (trade pool — by design, trades must be
+ *     finalised before window closes; any leftovers are stale)
+ *
+ * What's KEPT under each player slug:
+ *   - name, hp_current, spell_slots_spent, spell_slots_max
+ *
+ * What's KEPT campaign-level:
+ *   - session_active (the flag itself, so the player apps know we're off)
  */
 async function clearSessionInventories() {
   if (!state.activeCampaign) return;
-  const tasks = state.playerFiles.map(async (pf) => {
+  const campaignId = state.activeCampaign.id;
+
+  // Per-player: read keep-fields, null the whole subtree, re-set keep-fields.
+  // Sequential to keep RTDB writes orderly — only ~6 players, no perf concern.
+  for (const pf of state.playerFiles) {
     const slug = pf.path.split('/players/')[1]?.split('/')[0] || '';
-    if (!slug) return;
-    const invRef = ref(_db, firebaseInventoryPath(state.activeCampaign.id, slug));
-    await set(invRef, null).catch(e => console.warn(`Clear inventory failed for ${slug}:`, e));
-  });
-  await Promise.all(tasks);
+    if (!slug) continue;
+    const sessionRef = ref(_db, `${firebaseCampaignPath(campaignId)}/session/${slug}`);
+
+    // Snapshot the persistent fields before we wipe.
+    let keep = {};
+    try {
+      const snap = await get(sessionRef);
+      const cur  = snap.val() || {};
+      keep = {
+        name:              cur.name              ?? null,
+        hp_current:        cur.hp_current        ?? null,
+        spell_slots_spent: cur.spell_slots_spent ?? null,
+        spell_slots_max:   cur.spell_slots_max   ?? null,
+      };
+    } catch (e) {
+      console.warn(`Could not read session/${slug} before clear:`, e);
+    }
+
+    // Strip null values so we don't write null fields back (which RTDB
+    // would treat as deletes anyway, but cleaner intent).
+    const keepFiltered = Object.fromEntries(
+      Object.entries(keep).filter(([, v]) => v !== null && v !== undefined)
+    );
+
+    try {
+      // set() with the filtered keep-only payload replaces the whole
+      // subtree — every other key under session/{slug} (inventory,
+      // pending_personal_loot, rest_request, etc.) is dropped.
+      await set(sessionRef, keepFiltered);
+    } catch (e) {
+      console.warn(`Clear session/${slug} failed:`, e);
+    }
+  }
+
+  // Campaign-level transient nodes.
+  const lootRef   = ref(_db, `${firebaseCampaignPath(campaignId)}/loot`);
+  const tradesRef = ref(_db, `${firebaseCampaignPath(campaignId)}/trades`);
+  await set(lootRef,   null).catch(e => console.warn('Clear loot failed:',   e));
+  await set(tradesRef, null).catch(e => console.warn('Clear trades failed:', e));
 }
 
 /**

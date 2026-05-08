@@ -1200,7 +1200,8 @@ input:disabled,
   flex-direction: column;
   gap:            0.4rem;
 }
-.trade-col-offer { flex: 0 0 280px; }
+.trade-col-offer   { flex: 0 0 220px; }
+.trade-col-discard { flex: 0 0 220px; }
 
 /* Each Your-Cards zone (active + hand) gets equal share of vertical space */
 .trade-col-yours #trade-active-zone,
@@ -1210,10 +1211,17 @@ input:disabled,
   min-height: 0;
 }
 
-.trade-col-offer .arrange-drop-zone {
+.trade-col-offer .arrange-drop-zone,
+.trade-col-discard .arrange-drop-zone {
   grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   flex:       1;
   min-height: 0;
+}
+
+/* Visually distinguish discard from offer — discard is a danger zone. */
+.trade-col-discard .arrange-drop-zone {
+  border-color:  var(--danger, #c44);
+  background:    rgba(196, 68, 68, 0.04);
 }
 
 /* Offered tile — shows retract button */
