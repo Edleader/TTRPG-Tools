@@ -11,9 +11,9 @@ combat:
       - name: Purist Grunt
         hp: 12
         count: 4
-        attack: 1+d4 (kitchen knife)
+        attack: 1+d4 (melee), d4 (thrown) (dagger)
         roll: 12
-        notes: March straight at Donny shouting. Will not be intimidated. Want him dead.  
+        notes: Don't intend on fighting, but will if forced. Very easy to defeat.  
 - label: The Scavengers (fuel station)
     enemies:
       - name: Scavenger (knife)
