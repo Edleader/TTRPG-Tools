@@ -25,7 +25,7 @@ card_order:
   - campaigns/campaign-01/players/big-donny-t/cards/baseball-bat-2.md
   - campaigns/campaign-01/players/big-donny-t/cards/motorcycle-helmet.md
   - campaigns/campaign-01/players/big-donny-t/cards/bull-rush.md
-  - campaigns/campaign-01/cards/weapons/hunting-rifle.md
+  - campaigns/campaign-01/players/big-donny-t/cards/hunting-rifle.md
 ---
 
 # Big Donny T (Matt)
