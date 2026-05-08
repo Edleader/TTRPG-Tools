@@ -18,10 +18,10 @@ hp_current: 30
 spell_slots_spent: 0
 currency: 0
 card_order:
-  - campaigns/campaign-01/cards/weapons/shovel.md
-  - campaigns/campaign-01/cards/weapons/kitchen-knife.md
-  - campaigns/campaign-01/cards/armour/motorcycle-helmet.md
-  - campaigns/campaign-01/cards/abilities/taunt.md
+  - campaigns/campaign-01/players/ryan-calder/cards/kitchen-knife.md
+  - campaigns/campaign-01/players/ryan-calder/cards/motorcycle-helmet.md
+  - campaigns/campaign-01/players/ryan-calder/cards/shovel.md
+  - campaigns/campaign-01/players/ryan-calder/cards/taunt.md
 ---
 
 # Ryan Calder (Gibbo)
