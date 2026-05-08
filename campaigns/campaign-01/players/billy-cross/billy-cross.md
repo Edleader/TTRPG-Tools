@@ -18,10 +18,10 @@ currency: 0
 hp_current: 22
 spell_slots_spent: 0
 card_order:
-  - campaigns/campaign-01/cards/weapons/compound-bow.md
-  - campaigns/campaign-01/cards/weapons/dagger.md
-  - campaigns/campaign-01/cards/abilities/shadow-step.md
-  - campaigns/campaign-01/cards/spells/muscle-cramp.md
+  - campaigns/campaign-01/players/billy-cross/cards/compound-bow.md
+  - campaigns/campaign-01/players/billy-cross/cards/dagger.md
+  - campaigns/campaign-01/players/billy-cross/cards/muscle-cramp.md
+  - campaigns/campaign-01/players/billy-cross/cards/shadow-step.md
 ---
 
 # Billy "The Arrow" Cross (Davo)
