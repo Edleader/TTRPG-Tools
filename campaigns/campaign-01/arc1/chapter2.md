@@ -88,7 +88,7 @@ She has been outside all night.
 
 **What Mara does:** takes her in without ceremony. She finds Charlotte a blanket and a spot near the back wall, brushes her hand through her hair, then goes back to what she was doing. Watching this interaction stands out to you, every other encounter with Mara has been transactional, in this, there is a breif glimpse of tenderness.
 
-**What Charlotte does:** sits in her corner. Pulls out the notebook. Draws.
+**What Charlotte does:** sits in her corner. Pulls a tattered notebook out of her backpack. Draws.
 
 ---
 
