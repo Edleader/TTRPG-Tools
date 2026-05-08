@@ -17,10 +17,10 @@ perk_17: ""
 hp_current: 28
 spell_slots_spent: 0
 card_order:
-  - campaigns/campaign-01/cards/abilities/focussed-disarm.md
-  - campaigns/campaign-01/cards/armour/motorcycle-helmet.md
-  - campaigns/campaign-01/cards/weapons/compound-bow.md
-  - campaigns/campaign-01/cards/items/lock-picks.md
+  - campaigns/campaign-01/players/big-donny-t/cards/compound-bow.md
+  - campaigns/campaign-01/players/big-donny-t/cards/focussed-disarm.md
+  - campaigns/campaign-01/players/big-donny-t/cards/lock-picks.md
+  - campaigns/campaign-01/players/big-donny-t/cards/motorcycle-helmet.md
 ---
 
 # Big Donny T (Matt)
