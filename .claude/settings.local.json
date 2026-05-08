@@ -9,7 +9,9 @@
       "Bash(git push *)",
       "Bash(Remove-Item \"C:\\\\Users\\\\edhay\\\\OneDrive\\\\Documents\\\\GitHub\\\\TTRPG Tools\\\\campaigns\\\\campaign-01\\\\arc1\\\\arc1-overview.dm.dm.md\" -ErrorAction SilentlyContinue)",
       "Bash(Remove-Item \"C:\\\\Users\\\\edhay\\\\OneDrive\\\\Documents\\\\GitHub\\\\TTRPG Tools\\\\campaigns\\\\campaign-01\\\\arc1\\\\chapter1.dm.dm.md\" -ErrorAction SilentlyContinue)",
-      "Bash(Write-Host \"Done\")"
+      "Bash(Write-Host \"Done\")",
+      "Bash(git pull *)",
+      "Bash(git stash *)"
     ]
   }
 }

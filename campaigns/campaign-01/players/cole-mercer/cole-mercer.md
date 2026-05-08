@@ -34,5 +34,7 @@ card_order:
 - Belt
 
 ## Background
+- Field medic/paramedic before The Anomoly
+- Aim: party healer who can handle range weapons decently but pretty squishy physically. Heavy focus on healing with range attacks only when party is safe or full health.
 
 ## Notes
