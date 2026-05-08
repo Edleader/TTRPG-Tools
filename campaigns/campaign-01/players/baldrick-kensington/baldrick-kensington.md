@@ -17,14 +17,7 @@ perk_17: ""
 hp_current: 32
 spell_slots_spent: 0
 currency: 0
-card_order:
-  - campaigns/campaign-01/players/baldrick-kensington/cards/taunt.md
-  - campaigns/campaign-01/players/baldrick-kensington/cards/combat-baton.md
-  - campaigns/campaign-01/players/baldrick-kensington/cards/improvised-crossbow.md
-  - campaigns/campaign-01/players/baldrick-kensington/cards/focussed-disarm.md
-  - campaigns/campaign-01/players/baldrick-kensington/cards/leather-vest.md
-  - campaigns/campaign-01/players/baldrick-kensington/cards/fever.md
-  - campaigns/campaign-01/players/baldrick-kensington/cards/flare-gun-2.md
+card_order: []
 ---
 
 # Baldrick "Ballsy" Kensington III (Ben)
