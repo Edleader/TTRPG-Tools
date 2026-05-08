@@ -331,8 +331,23 @@ function coerceYamlValue(val) {
   if (val === 'true')  return true;
   if (val === 'false') return false;
   if (/^\d+$/.test(val)) return parseInt(val, 10);
-  if ((val.startsWith('"') && val.endsWith('"')) ||
-      (val.startsWith("'") && val.endsWith("'"))) {
+  if (val.startsWith('"') && val.endsWith('"') && val.length >= 2) {
+    // Double-quoted scalar — unescape backslashed newlines/tabs/quotes to
+    // round-trip values written by formatScalarValue (multi-line strings
+    // and strings containing colons).
+    const inner = val.slice(1, -1);
+    return inner.replace(/\\(.)/g, (_, ch) => {
+      switch (ch) {
+        case 'n':  return '\n';
+        case 'r':  return '\r';
+        case 't':  return '\t';
+        case '"':  return '"';
+        case '\\': return '\\';
+        default:   return ch;
+      }
+    });
+  }
+  if (val.startsWith("'") && val.endsWith("'") && val.length >= 2) {
     return val.slice(1, -1);
   }
   return val;
@@ -381,25 +396,88 @@ function serialiseYamlEntry(key, value, indent) {
           const sv = item[sk];
           // First subkey sits next to the dash; rest indent under it
           const prefix = i === 0 ? `${pad}  - ` : `${pad}    `;
-          if (sv === null || sv === undefined) return `${prefix}${sk}:`;
-          if (typeof sv === 'boolean' || typeof sv === 'number') return `${prefix}${sk}: ${sv}`;
-          const needsQ = typeof sv === 'string' && (sv.includes(':') || sv.includes('#'));
-          return needsQ ? `${prefix}${sk}: "${sv}"` : `${prefix}${sk}: ${sv}`;
+          return formatScalarLine(prefix, sk, sv);
         });
         return lines.join('\n');
       });
       return `${pad}${key}:\n${items.join('\n')}`;
     }
     // Array of scalars → block sequence
-    const lines = value.map(v => `${pad}  - ${v}`);
+    const lines = value.map(v => `${pad}  - ${formatScalarValue(v)}`);
     return `${pad}${key}:\n${lines.join('\n')}`;
   }
 
   if (typeof value === 'string') {
-    const needsQuotes = value.includes(':') || value.includes('#');
-    return needsQuotes ? `${pad}${key}: "${value}"` : `${pad}${key}: ${value}`;
+    return `${pad}${key}: ${formatScalarValue(value)}`;
   }
 
-  // Fallback for unexpected types
+  // Defensive: a nested object at this position would corrupt the YAML if
+  // we just stringified it. Skip the entry rather than emit broken output.
+  if (value && typeof value === 'object') {
+    console.warn(`serialiseFrontmatter: dropping nested-object value for key "${key}"`);
+    return `${pad}${key}:`;
+  }
+
+  // Fallback for unexpected scalar types
   return `${pad}${key}: ${String(value)}`;
+}
+
+/**
+ * Formats a single subkey line inside a sequence-of-mappings. Handles the
+ * same range of value types as a top-level entry, but never recurses into
+ * deeper nested objects (those get logged-and-dropped) — frontmatter only
+ * needs one level of nesting in practice.
+ */
+function formatScalarLine(prefix, sk, sv) {
+  if (sv === null || sv === undefined) return `${prefix}${sk}:`;
+  if (typeof sv === 'boolean' || typeof sv === 'number') return `${prefix}${sk}: ${sv}`;
+  if (typeof sv === 'string') {
+    return `${prefix}${sk}: ${formatScalarValue(sv)}`;
+  }
+  if (Array.isArray(sv)) {
+    // Inline scalar arrays only — nested structured arrays at this depth
+    // aren't used anywhere in the project.
+    if (sv.every(x => typeof x === 'string' || typeof x === 'number' || typeof x === 'boolean')) {
+      return `${prefix}${sk}: [${sv.map(formatScalarValue).join(', ')}]`;
+    }
+    console.warn(`serialiseFrontmatter: dropping complex array under "${sk}"`);
+    return `${prefix}${sk}: []`;
+  }
+  if (typeof sv === 'object') {
+    console.warn(`serialiseFrontmatter: dropping nested-object value under "${sk}"`);
+    return `${prefix}${sk}:`;
+  }
+  return `${prefix}${sk}: ${String(sv)}`;
+}
+
+/**
+ * Formats a scalar value safely for YAML emission. Strings with special
+ * characters (colons, hashes, leading/trailing space, multi-line content)
+ * are double-quoted with internal quotes/backslashes/newlines escaped.
+ * This is the safety net that stops a markdown body or a value containing
+ * a colon from breaking out of the YAML mapping.
+ */
+function formatScalarValue(v) {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'boolean' || typeof v === 'number') return String(v);
+  const s = String(v);
+  const needsQuotes =
+       s === ''
+    || s.includes('\n')
+    || s.includes(':')
+    || s.includes('#')
+    || s.includes('"')
+    || /^[\s>|*&!%@`]/.test(s)
+    || /\s$/.test(s);
+  if (!needsQuotes) return s;
+  // Escape backslashes, double-quotes, and newlines (\n) into a single-line
+  // double-quoted scalar. YAML's double-quoted style supports \n as a real
+  // newline, which round-trips correctly through our parser.
+  const escaped = s
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g,  '\\"')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t');
+  return `"${escaped}"`;
 }

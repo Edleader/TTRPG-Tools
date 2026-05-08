@@ -364,10 +364,31 @@ function loadCharacter() {
   renderHp();
   renderSpellSlots();
   renderPerks();
-  loadAndRenderCards();
 
-  // Subscribe to Firebase session state
+  // Show a placeholder in the card grids until we know whether to render from
+  // GitHub (session inactive) or wait for Firebase (session active).
+  // applyCampaignSnapshot decides which path to take when the first Firebase
+  // snapshot arrives. This stops the brief GitHub-then-Firebase flash on
+  // refresh that you'd otherwise see when the saved card_order on disk is
+  // out of date.
+  state._initialInventoryRendered = false;
+  showInventoryLoadingPlaceholder();
+
+  // Subscribe to Firebase session state. The first snapshot fires almost
+  // immediately and routes us to either the GitHub or Firebase render path
+  // via applyCampaignSnapshot.
   subscribeFirebase();
+
+  // Safety net: if Firebase is unreachable, the placeholder would otherwise
+  // hang forever. Fall back to a GitHub-only render if no snapshot has
+  // arrived after 4 seconds. (Normal latency is well under a second.)
+  setTimeout(() => {
+    if (state._initialInventoryRendered) return;
+    console.warn('No Firebase snapshot after 4s — falling back to GitHub render.');
+    state._initialInventoryRendered = true;
+    loadAndRenderCards().catch(e =>
+      console.warn('Fallback inventory load failed:', e));
+  }, 4000);
 
   // Rehydrate any personal pending loot saved to GitHub during a previous
   // session-end. This pushes those entries back into Firebase so the
@@ -378,15 +399,39 @@ function loadCharacter() {
 }
 
 /**
+ * Paints both card grids with a "Loading inventory…" placeholder. Used at
+ * login and during the brief window between PIN-accept and the first
+ * Firebase snapshot, so the player never sees a stale GitHub render.
+ */
+function showInventoryLoadingPlaceholder() {
+  const activeEl = document.getElementById('active-cards-grid');
+  const handEl   = document.getElementById('hand-cards-grid');
+  if (activeEl) activeEl.innerHTML = '<span class="cards-loading">Loading inventory…</span>';
+  if (handEl)   handEl.innerHTML   = '';
+}
+
+/**
  * If the character file's frontmatter holds a saved `pending_personal_loot`
  * list (carried over from a session that ended before the player handled it),
  * push those entries back into Firebase as fresh pending entries and clear
  * the frontmatter copy.
  *
+ * The frontmatter version of pending loot only carries lightweight reference
+ * fields (cardPath, name, slots, sentAt, etc.) — the full markdown body and
+ * extra fields are re-fetched here from the source card file so the player
+ * sees the real card content in the notification and arrange overlay. This
+ * mirrors how the DM's seed reads each card from disk; we do the same here
+ * for any cards the player didn't accept before the previous session ended.
+ *
  * Idempotent: reads Firebase first and dedups against existing pending
  * entries by cardPath+sentAt. This stops duplicate push-loops if the
  * frontmatter contains entries that the previous flush copy didn't fully
  * clear, or if a fresh personal-loot drop arrived during the same session.
+ *
+ * Best-effort on the source card read: if the file is missing (e.g. DM
+ * deleted it from the library between sessions), we still push the slim
+ * record so the player can decide what to do — they'll just see an empty
+ * description until the card is restored.
  */
 async function rehydratePersonalPendingFromFrontmatter() {
   const fm = state.fm;
@@ -407,14 +452,46 @@ async function rehydratePersonalPendingFromFrontmatter() {
     for (const card of saved) {
       const sig = `${card.cardPath || ''}|${card.sentAt || ''}`;
       if (seen.has(sig)) continue; // already in Firebase, skip
+
+      // Re-fetch the full card payload from its source path so the rehydrated
+      // pending entry carries _body / _extra / player_slot — the same shape
+      // sendPersonalLoot writes when fresh loot is staged. If the file is
+      // missing we still push the slim record so the player isn't stuck.
+      let body       = '';
+      let extra      = {};
+      let playerSlot = card.slots || 'hand';
+      if (card.cardPath) {
+        try {
+          const { content } = await readFile(card.cardPath);
+          const sourceFm = parseFrontmatter(content);
+          body  = sourceFm._body || '';
+          // Strip well-known fields; keep dr/effect/notes/hands_required etc.
+          const known = new Set([
+            '_body', 'name', 'card_type', 'slots', 'player_slot',
+            'generation', '_path', '_sha',
+          ]);
+          for (const [k, v] of Object.entries(sourceFm)) {
+            if (known.has(k)) continue;
+            if (v === undefined || v === null) continue;
+            extra[k] = v;
+          }
+          if (sourceFm.player_slot) playerSlot = sourceFm.player_slot;
+        } catch (e) {
+          console.warn(`Could not re-fetch source card ${card.cardPath}:`, e);
+        }
+      }
+
       const newRef = push(pendingRoot);
       await set(newRef, {
-        cardPath:   card.cardPath  || '',
-        name:       card.name      || '',
-        card_type:  card.card_type || '',
-        slots:      card.slots     || 'hand',
-        generation: card.generation || 1,
-        sentAt:     card.sentAt    || Date.now(),
+        cardPath:    card.cardPath  || '',
+        name:        card.name      || '',
+        card_type:   card.card_type || '',
+        slots:       card.slots     || 'hand',
+        player_slot: playerSlot,
+        generation:  card.generation || 1,
+        _body:       body,
+        _extra:      extra,
+        sentAt:      card.sentAt    || Date.now(),
       });
     }
 
@@ -451,10 +528,35 @@ function renderHp() {
 }
 
 function adjustHp(delta) {
+  if (!requireSessionActive('change HP')) return;
   state.currentHp = Math.max(0, Math.min(state.maxHp, state.currentHp + delta));
   renderHp();
   pushHpToFirebase();
   scheduleHpSave();
+}
+
+/**
+ * Gate that blocks any player-initiated mutation when no session is active.
+ *
+ * The DM owns the session lifecycle: while inactive, the canonical inventory
+ * and HP/spell state lives on GitHub and the FB inventory subscriber is torn
+ * down. Letting players write in this window risks split-brain (writes that
+ * never reach the next session-seed, or stale GitHub data clobbering the
+ * eventual seed). Read access stays open — players can still browse cards,
+ * see HP/spells, and click into modals; they just can't change anything.
+ *
+ * The UI also disables the relevant buttons when sessionActive is false
+ * (see applyCampaignSnapshot), so this is a safety-net for any path that
+ * skips the button (drag handlers, keyboard, programmatic calls).
+ *
+ * @param {string} action - Short verb describing what the user tried to do.
+ *                          Used in the alert text shown to the player.
+ * @returns {boolean} true if the action is permitted, false if it was blocked.
+ */
+function requireSessionActive(action) {
+  if (state.sessionActive) return true;
+  alert(`Can't ${action} — there's no active session right now. Wait for the GM to start one.`);
+  return false;
 }
 
 function scheduleHpSave() {
@@ -504,11 +606,13 @@ function renderSpellSlots() {
     btn.className = 'spell-bubble' + (spent ? ' spent' : '');
     btn.title     = spent ? 'Spent (tap to restore)' : 'Available (tap to spend)';
     btn.dataset.idx = i;
+    btn.disabled  = !state.sessionActive;
     bubblesEl.appendChild(btn);
   }
 }
 
 function onSpellBubbleTap(idx) {
+  if (!requireSessionActive('change spell slots')) return;
   const avail = state.maxSpellSlots - state.spentSlots;
   // If tapping an available slot → spend it; if tapping a spent → restore it
   if (idx < avail) {
@@ -803,13 +907,9 @@ async function cancelRestRequest() {
  * @param {'short'|'long'} type
  */
 async function requestRest(type) {
+  if (!requireSessionActive('request a rest')) return;
   const label = type === 'short' ? 'Short Rest' : 'Long Rest';
   if (!confirm(`Are you sure you want to take a ${label}?`)) return;
-
-  if (!state.sessionActive) {
-    alert('No active session right now.');
-    return;
-  }
 
   const restPath = `${firebasePlayerPath(state.campaignId, state.characterSlug)}/rest_request`;
   try {
@@ -892,8 +992,33 @@ function applyCampaignSnapshot(data) {
   state.sessionActive = data.session_active === true;
   document.getElementById('session-banner').style.display =
     state.sessionActive ? 'none' : '';
-  document.getElementById('btn-arrange-cards').disabled = !state.sessionActive;
-  document.getElementById('btn-trade-cards').disabled   = !state.sessionActive;
+
+  // Lock down all player-side mutation surfaces when the session is inactive.
+  // Read-only ID list; flips together so we never miss one. The mutator
+  // functions (adjustHp, requestRest, openArrangeOverlay, ...) ALSO check
+  // state.sessionActive via requireSessionActive() as a safety net for any
+  // path that bypasses the button (drag handlers, programmatic invocation).
+  const lockedWhenInactive = [
+    'btn-arrange-cards',
+    'btn-trade-cards',
+    'btn-hp-minus',
+    'btn-hp-plus',
+    'btn-hp-damage',
+    'btn-hp-heal',
+    'btn-short-rest',
+    'btn-long-rest',
+  ];
+  for (const id of lockedWhenInactive) {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !state.sessionActive;
+  }
+  // Spell bubbles + damage/heal inputs need a separate touch — they're not
+  // <button> elements with the same ID convention.
+  document.querySelectorAll('.spell-bubble').forEach(b => {
+    b.disabled = !state.sessionActive;
+  });
+  const customAmount = document.getElementById('hp-custom-amount');
+  if (customAmount) customAmount.disabled = !state.sessionActive;
 
   // Inventory subscriber lifecycle: subscribe on session start, unsubscribe
   // on session end. The DM seeds Firebase before flipping session_active to
@@ -906,6 +1031,21 @@ function applyCampaignSnapshot(data) {
     // reconcile will have already flushed our last state to GitHub.
     loadAndRenderCards().catch(e =>
       console.warn('Post-session inventory reload failed:', e));
+  }
+
+  // First-snapshot render gate: on initial login (or refresh) we deferred
+  // any inventory render until we knew the session state. Now we know — if
+  // the session is INACTIVE, paint from GitHub; if ACTIVE, leave the
+  // placeholder up and let the FB inventory subscriber drive the first
+  // render (it'll fire within milliseconds).
+  if (!state._initialInventoryRendered) {
+    state._initialInventoryRendered = true;
+    if (!state.sessionActive) {
+      loadAndRenderCards().catch(e =>
+        console.warn('Initial inventory load failed:', e));
+    }
+    // (active-session case: subscribeSessionInventory above starts the
+    // onValue listener; its first snapshot will overwrite the placeholder.)
   }
 
   const playerData = (data.session || {})[state.characterSlug] || {};
@@ -1206,6 +1346,7 @@ function tradeYoursHand() {
  * so we can detect changes on close and only write the diffs to GitHub.
  */
 function openTradeOverlay() {
+  if (!requireSessionActive('trade cards')) return;
   _trade._initialSlotByPath = new Map(
     state.inventory.map(c => [c._path, cardSlot(c)])
   );
@@ -2999,7 +3140,21 @@ async function handleGlootDrop({ event, card, fromZone }) {
     return;
   }
 
-  // First, remove the card from any existing local zone classification:
+  // Reject illegal destinations BEFORE we mutate any state. The two cases
+  // that can be illegal here are:
+  //   - inventory card (has _path) dropped into Incoming — Incoming is the
+  //     fresh-claim holding pen, inventory cards belong in active/hand.
+  //   - fresh-claim card (no _path) dropped into Holding — Holding is for
+  //     trading inventory cards into the shared pool; a fresh-claim card
+  //     hasn't been adopted into inventory yet so offering it back is
+  //     structurally awkward.
+  // Previously these were caught inside the switch AFTER we'd already
+  // removed the card from _gloot.incoming, which made fresh cards visually
+  // disappear when dragged onto the Holding zone (see test T-gloot-6).
+  if (target === 'incoming' && card._path) { renderGroupLoot(); return; }
+  if (target === 'holding'  && !card._path) { renderGroupLoot(); return; }
+
+  // Now safe to remove the card from any existing local zone classification:
   //   - holdingPaths / discardPaths sets (path-keyed)
   //   - incoming list (object-keyed)
   if (card._path) {
@@ -3037,28 +3192,15 @@ async function handleGlootDrop({ event, card, fromZone }) {
       }
       break;
     case 'incoming':
-      // Drop into the holding pen — only meaningful for fresh cards being
-      // moved BACK from a temporary placement. Inventory cards in incoming
-      // is a no-op (they belong in active/hand).
-      if (!card._path) {
-        delete card._targetZone;
-        _gloot.incoming.push(card);
-      } else {
-        renderGroupLoot();
-        return;
-      }
+      // Fresh-claim card returning to Incoming from a temporary placement.
+      // (Inventory-card-into-Incoming was rejected above.)
+      delete card._targetZone;
+      _gloot.incoming.push(card);
       break;
     case 'holding':
-      // Phase 1 — only inventory cards make sense in Holding. A freshly
-      // claimed card hasn't been incorporated into our inventory yet, so
-      // offering it back to the holding pool is structurally awkward.
-      // Silently bounce; the card stays where it was.
-      if (card._path) {
-        _gloot.holdingPaths.add(card._path);
-      } else {
-        renderGroupLoot();
-        return;
-      }
+      // Inventory card moving into the Phase-1 Holding pen.
+      // (Fresh-claim-into-Holding was rejected above.)
+      _gloot.holdingPaths.add(card._path);
       break;
     case 'discard':
       // Phase 2 — both inventory cards AND fresh-from-strip cards can go to
@@ -3351,6 +3493,7 @@ const _arrange = {
  * Discard, or move cards between Active and Hand.
  */
 function openArrangeOverlay() {
+  if (!requireSessionActive('arrange cards')) return;
   // Snapshot current inventory into working zones
   _arrange.active   = [...(state._activeCards || [])];
   _arrange.hand     = [...(state._handCards   || [])];

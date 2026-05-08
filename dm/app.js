@@ -2667,9 +2667,27 @@ async function flushPendingPersonalLootToGitHub() {
       // double-end-session click doesn't double-write. The new entries from
       // Firebase always have sentAt; existing entries from a prior flush
       // also have sentAt (preserved by the player rehydrate).
+      //
+      // CRITICAL: only persist the lightweight reference fields here. The
+      // Firebase entry carries `_body` (markdown body, multi-line, full of
+      // colons) and `_extra` (a nested object). Both of those wreck the
+      // YAML frontmatter when serialised — multi-line strings break out of
+      // the mapping, nested objects stringify as "[object Object]", and the
+      // resulting corrupted YAML re-parses with stray top-level keys that
+      // overwrite real character fields like `name`. The full payload will
+      // be re-fetched from `cardPath` when the player rehydrates next session.
       const sigSeen = new Set(existing.map(e => `${e.cardPath || ''}|${e.sentAt || ''}`));
-      const fresh = entries.filter(e => !sigSeen.has(`${e.cardPath || ''}|${e.sentAt || ''}`));
-      fm.pending_personal_loot = [...existing, ...fresh];
+      const slimEntries = entries
+        .filter(e => !sigSeen.has(`${e.cardPath || ''}|${e.sentAt || ''}`))
+        .map(e => ({
+          cardPath:    e.cardPath  || '',
+          name:        e.name      || '',
+          card_type:   e.card_type || '',
+          slots:       e.slots     || 'hand',
+          generation:  e.generation || 1,
+          sentAt:      e.sentAt    || Date.now(),
+        }));
+      fm.pending_personal_loot = [...existing, ...slimEntries];
 
       await writeFile(pf.path, serialiseFrontmatter(fm),
         `Flush pending personal loot for ${slug} on session end`, sha);
@@ -3008,8 +3026,14 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-session-toggle').addEventListener('click', async () => {
     if (!state.activeCampaign) return;
     const newState = !state.sessionActive;
-    const label    = newState ? 'start' : 'end';
-    if (!confirm(`Are you sure you want to ${label} the session?`)) return;
+    const promptMsg = newState
+      ? 'Start the session? This will load every player\'s cards into Firebase so the live tools can see them.'
+      : 'End the session?\n\n'
+        + 'IMPORTANT: every player should close their app first. While the '
+        + 'session ends we write all their card changes back to GitHub — if a '
+        + 'player is still open and mid-action it can race the save.\n\n'
+        + 'Continue?';
+    if (!confirm(promptMsg)) return;
 
     const btn = document.getElementById('btn-session-toggle');
     btn.disabled    = true;
@@ -3033,6 +3057,11 @@ document.addEventListener('DOMContentLoaded', () => {
         await flushPendingPersonalLootToGitHub();
         await clearSessionInventories();
       }
+      // Set the final-state label here so the user sees the right text the
+      // instant the operation completes. The Firebase snapshot listener will
+      // also set this, but it can lag by a frame or two on a slow socket —
+      // long enough to show a flash of the OLD label before snapping to new.
+      btn.textContent = newState ? 'End Session' : 'Start Session';
     } catch (e) {
       alert('Could not update session state: ' + e.message);
     } finally {
