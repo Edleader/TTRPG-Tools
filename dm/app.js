@@ -185,10 +185,12 @@ function inferFrontmatter(path) {
  * Called on-demand when a file is opened, and in the background for all others.
  *
  * @param {object} fileObj - A stub from the file index
+ * @param {boolean} [forceReload=false] - If true, re-fetch from GitHub even if already loaded.
+ *        Used for player files so DM sees player-side notes edits without refresh.
  * @returns {Promise<void>}
  */
-async function loadFileContent(fileObj) {
-  if (fileObj.loaded) return;
+async function loadFileContent(fileObj, forceReload = false) {
+  if (fileObj.loaded && !forceReload) return;
   try {
     const { content, sha } = await readFile(fileObj.path);
     fileObj.rawContent  = content;
@@ -582,10 +584,14 @@ async function openFile(fileObj) {
     exitDmNotesEdit(false);
   }
 
-  // If content hasn't been fetched yet, load it now before rendering
-  if (!fileObj.loaded) {
+  // If content hasn't been fetched yet, load it now before rendering.
+  // For player files, always re-fetch from GitHub so the DM sees any
+  // notes edits the player saved during the session without needing to refresh.
+  // Other files don't change mid-session, so the cached copy is fine.
+  const isPlayer = isPlayerFile(fileObj);
+  if (!fileObj.loaded || isPlayer) {
     showSaveStatus('Loading…');
-    await loadFileContent(fileObj);
+    await loadFileContent(fileObj, /*forceReload=*/isPlayer);
     showSaveStatus('');
   }
 
