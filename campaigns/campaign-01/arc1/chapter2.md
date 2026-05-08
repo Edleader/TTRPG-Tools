@@ -14,7 +14,7 @@ combat:
         attack: 1+d4 (melee), d4 (thrown) (dagger)
         roll: 12
         notes: Don't intend on fighting, but will if forced. Very easy to defeat.  
-- label: The Scavengers (fuel station)
+  - label: The Scavengers (fuel station)
     enemies:
       - name: Scavenger (knife)
         hp: 15
