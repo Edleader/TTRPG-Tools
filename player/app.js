@@ -816,18 +816,50 @@ function renderCardGrid(container, cards) {
 function openCardModal(card) {
   const content = document.getElementById('modal-content');
 
-  const rows = [
+  // Known fields render in this fixed order with friendly labels. The
+  // `Damage` row maps to the underlying `effect` field — that's the
+  // damage formula on weapons (e.g. "2+d4") — and is labelled differently
+  // for non-weapons because abilities/spells use the same field for
+  // their general effect description.
+  const isCombatCard = ['weapon', 'spell', 'ability'].includes(
+    String(card.card_type || '').toLowerCase()
+  );
+  const knownRows = [
     ['Type',      card.card_type],
     ['Stat',      card.stat],
     ['Hands',     card.hands_required ? `${card.hands_required} hand${card.hands_required > 1 ? 's' : ''}` : null],
     ['Difficulty', card.difficulty],
     ['Range',     card.range],
-    ['Effect',    card.effect],
-    ['DR',        card.dr !== undefined ? String(card.dr) : null],
+    [isCombatCard ? 'Damage / Effect' : 'Effect', card.effect],
+    ['DR',        card.dr !== undefined && card.dr !== null && card.dr !== '' ? String(card.dr) : null],
     ['Spell Cost', card.spell_slots_cost ? `${card.spell_slots_cost} slot${card.spell_slots_cost > 1 ? 's' : ''}` : null],
     ['Consumable', card.consumable ? 'Yes' : null],
+    ['Value',     card.value !== undefined && card.value !== null && card.value !== '' ? String(card.value) : null],
     ['Notes',     card.notes],
-  ].filter(r => r[1]);
+  ];
+
+  // Fallback: any frontmatter field that we DIDN'T render via knownRows
+  // gets shown verbatim at the bottom. Catches cards whose authors used
+  // unconventional field names ("damage", "weight", anything custom)
+  // without us silently losing them. Skip internal/structural fields.
+  const renderedKeys = new Set([
+    'card_type', 'stat', 'hands_required', 'difficulty', 'range',
+    'effect', 'dr', 'spell_slots_cost', 'consumable', 'value', 'notes',
+    'name', 'slots', 'player_slot', 'generation',
+    '_path', '_fbKey', '_body', '_order', '_sha',
+  ]);
+  const extraRows = [];
+  for (const [k, v] of Object.entries(card)) {
+    if (renderedKeys.has(k)) continue;
+    if (k.startsWith('_')) continue;
+    if (v === null || v === undefined || v === '') continue;
+    if (typeof v === 'object') continue; // nested objects skipped
+    // Capitalise the first letter for display.
+    const label = k.charAt(0).toUpperCase() + k.slice(1).replace(/_/g, ' ');
+    extraRows.push([label, String(v)]);
+  }
+
+  const rows = [...knownRows.filter(r => r[1]), ...extraRows];
 
   content.innerHTML = `
     <div class="modal-card-type">${escapeHtml(card.card_type || '')}</div>
@@ -2540,6 +2572,14 @@ function onGroupLootUpdate(session) {
   const myState = (session.playerStates || {})[state.characterSlug] || {};
   _gloot.ready = !!myState.ready;
 
+  // Commit trigger: any one player's Finalise click sets session.commitTrigger
+  // = true. Every connected player runs their own commit when they see it.
+  // Guarded against re-entrance by the data-committing flag inside runMyCommit
+  // and by checking our own committed flag here.
+  if (session.commitTrigger && !myState.committed) {
+    runMyCommit().catch(e => console.error('runMyCommit failed:', e));
+  }
+
   renderGroupLoot();
 }
 
@@ -2874,14 +2914,17 @@ function renderGroupLootReady(session) {
   // their owner). In claim phase, pressing Finalise advances to trade phase
   // automatically if anyone offered cards to Holding.
   //
-  // Each player commits independently now (see finaliseGroupLoot) — there's
-  // no shared "finalising" lock anymore. The button's local data-committing
-  // attribute is set by finaliseGroupLoot itself when this player has
-  // started their commit, so we don't undo that here.
+  // Two ways to get into the locked-down "Saving…" state:
+  //   - data-committing flag (set by runMyCommit while this player's
+  //     commit is in flight)
+  //   - session.commitTrigger flag (some other player has clicked
+  //     Finalise; we're about to start committing once our own
+  //     subscriber sees it)
   const finaliseBtn = document.getElementById('btn-gl-finalise');
   const allReady    = slugs.length > 0 && slugs.every(s => states[s]?.ready);
+  const committing  = finaliseBtn.dataset.committing === 'true' || !!session.commitTrigger;
 
-  if (finaliseBtn.dataset.committing === 'true') {
+  if (committing) {
     finaliseBtn.textContent = 'Saving…';
     finaliseBtn.disabled    = true;
     readyBtn.disabled       = true;
@@ -3286,24 +3329,21 @@ async function toggleGlootReady() {
 }
 
 /**
- * Finalises the loot session (any player can press; only the first click
- * wins via Firebase transaction).
+ * Click handler for the Finalise button.
  *
- * Flow:
- *   1. EVERY player who has clicked Finalise runs their own commit
- *      independently — there is no winner-takes-all step. Each player
- *      writes their own claimed/discarded/reordered cards to Firebase.
- *      A flag at playerStates/{slug}/committed marks completion.
- *   2. The last player to commit (the one whose write makes every
- *      participating slug's `committed` flag true) deletes the loot
- *      session entirely; the DM observer closes when it sees null.
+ * Behaviour depends on phase:
+ *   - Claim phase, anyone has cards in Holding → flatten holding into
+ *     the shared pool and transition to Trade phase (existing code).
+ *   - Claim phase, no holding, OR Trade phase → set `commitTrigger: true`
+ *     in Firebase. Every connected player's loot subscriber sees that
+ *     flag and runs runMyCommit() locally. Each player commits their
+ *     own claimed/discarded/reordered state, marks themselves committed,
+ *     and the last committer deletes the session.
  *
- * Why per-player rather than winner-takes-all: the previous design had
- * the FIRST clicker run a single commitMyGroupLootResult and then nuke
- * the session. Every other player's local _gloot.incoming (claimed
- * cards never written to FB) evaporated with the session delete. See
- * test T-gloot-2 in the 2026-05-08 round-2 test failure: Donny lost
- * three cards because Ballsy clicked Finalise first.
+ * The point of the trigger flag is that ONE click commits EVERYONE.
+ * Previously every player had to click Finalise individually, which
+ * (a) was awkward UX and (b) opened a window where a refresh could
+ * lose a player's claims before they got their click in.
  */
 async function finaliseGroupLoot() {
   const session = _gloot.session;
@@ -3367,13 +3407,48 @@ async function finaliseGroupLoot() {
     }
   }
 
-  // Phase 2 finalise (or Phase 1 finalise with no holding): every player
-  // commits their own state. Lock the local UI immediately to stop dupes.
+  // Phase 2 finalise (or Phase 1 finalise with no holding): set the
+  // commitTrigger flag. Every player's onGroupLootUpdate sees this and
+  // calls runMyCommit() locally — that's where the actual per-player
+  // work happens.
+  //
+  // Use a transaction so two simultaneous Finalise clicks don't both
+  // try to write the trigger; only the first one wins and the second
+  // becomes a no-op. This makes the click feel atomic.
+  const sessionRef = ref(db, firebaseLootPath(state.campaignId));
+  await runTransaction(sessionRef, (cur) => {
+    if (!cur) return;
+    if (cur.commitTrigger) return; // already triggered, leave alone
+    return { ...cur, commitTrigger: true };
+  }).catch(e => {
+    console.warn('Could not set commitTrigger:', e);
+  });
+
+  // Don't close the overlay here — runMyCommit will fire from the FB
+  // subscriber for THIS player too, complete the local commit, and
+  // close the overlay then. Player sees "Saving…" until their data is
+  // safely in Firebase, which is the requested UX.
+}
+
+/**
+ * Runs THIS player's commit. Triggered by onGroupLootUpdate when it sees
+ * `commitTrigger: true` in the session. Every connected player runs this
+ * independently and writes their own state to Firebase.
+ *
+ * Idempotent within a session — guarded by the local data-committing
+ * flag on the Finalise button, plus the player's own `committed` flag
+ * in Firebase (we won't run again if we already see it set).
+ */
+async function runMyCommit() {
   const finaliseBtn = document.getElementById('btn-gl-finalise');
-  if (finaliseBtn.dataset.committing === 'true') return; // re-click guard
+  if (!finaliseBtn) return;
+  if (finaliseBtn.dataset.committing === 'true') return;
   finaliseBtn.dataset.committing = 'true';
   finaliseBtn.disabled    = true;
   finaliseBtn.textContent = 'Saving…';
+  // Disable Ready too — no more changes from this point.
+  const readyBtn = document.getElementById('btn-gl-ready');
+  if (readyBtn) readyBtn.disabled = true;
 
   const slug = state.characterSlug;
   try {
@@ -3387,9 +3462,9 @@ async function finaliseGroupLoot() {
     return;
   }
 
-  // Mark me committed so other players (and the last-committer cleanup
-  // below) can tell I'm done. Best-effort — if the write fails the
-  // session lingers for the DM to force-close.
+  // Mark me committed so the last-committer cleanup below (and other
+  // players' subscribers) can tell I'm done. Best-effort: if this write
+  // fails, the session lingers and the DM can force-close.
   try {
     await update(ref(db,
       `${firebaseLootPath(state.campaignId)}/playerStates/${slug}`),
@@ -3398,10 +3473,10 @@ async function finaliseGroupLoot() {
     console.warn('Could not mark self committed:', e);
   }
 
-  // Re-read the session: if I'm the last committer, delete the session
-  // so the DM observer closes and everyone's overlay closes via onValue.
-  // Race-safe: `remove` is idempotent so two players concluding "all
-  // committed" simultaneously is fine.
+  // Last-committer cleanup: if EVERY participating slug is now committed,
+  // delete the loot session. `remove` is idempotent so two players
+  // simultaneously deciding they're last is safe. Other players see the
+  // null snapshot and their onGroupLootUpdate closes their overlay.
   try {
     const snap = await get(ref(db, firebaseLootPath(state.campaignId)));
     const cur  = snap.val();
@@ -3418,9 +3493,8 @@ async function finaliseGroupLoot() {
     console.warn('Last-committer cleanup check failed:', e);
   }
 
-  // Close my overlay regardless. If other players are still committing,
-  // their own session will tear down for them when the last one finishes
-  // (or when the DM force-closes).
+  // Close MY overlay — the cleanup above closes everyone else's via the
+  // session-null snapshot.
   closeGroupLoot();
 }
 
@@ -3490,12 +3564,18 @@ async function commitMyGroupLootResult() {
   }
 
   // 2. Persist any Active↔Hand reorderings done during this session.
+  // Diagnostic logging in case Bug C (round-3 T-A-6, T-int-2: slot
+  // desync after loot commit) shows up again — we want to see exactly
+  // which cards we're rewriting and to which slot, so we can correlate
+  // with what the player saw on screen.
   if (_gloot._initialSlotByPath) {
     for (const card of state.inventory) {
       const initial = _gloot._initialSlotByPath.get(card._path);
       if (initial === undefined) continue;
       const current = cardSlot(card);
       if (current === initial) continue;
+
+      console.log(`[gloot commit] slot diff: ${card.name} ${initial} → ${current}`);
 
       if (state.sessionActive) {
         if (!card._fbKey) continue;

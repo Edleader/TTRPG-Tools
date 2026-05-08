@@ -2487,51 +2487,50 @@ function extractExtraFields(fm) {
  *   5. Save the per-zone card_order to the player .md frontmatter.
  */
 async function reconcileSessionInventoriesToGitHub() {
-  if (!state.activeCampaign) return;
+  if (!state.activeCampaign) return { failures: [], stats: { written: 0, deleted: 0, skipped: 0 } };
 
-  // Each player's reconcile collects any per-file failures; we surface
-  // them to the DM after all reconciles run so the GM knows when GitHub
-  // didn't actually match what Firebase said. Previously these failures
-  // were swallowed by a console.warn and discarded cards reappeared on
-  // next session start (round-2 test T-arrange-2).
+  // Players run SEQUENTIALLY. Earlier we ran them in parallel which caused
+  // a wave of 409 stale-SHA conflicts: GitHub's content API has a brief
+  // eventual-consistency window after each commit, and parallel writes
+  // across files in the same directory hit each other's shadows on the
+  // next read. Sequentialising avoids that. Per-player files are also
+  // sequential (inside reconcileSinglePlayerInventory). Slower, but
+  // dramatically more reliable. Speed isn't a concern (per user).
+  //
+  // Per-file failures bubble up via the return value of
+  // reconcileSinglePlayerInventory; we aggregate and either show a
+  // success or failure alert at end-session.
   const failures = [];
+  const stats    = { written: 0, deleted: 0, skipped: 0 };
 
-  const tasks = state.playerFiles.map(async (pf) => {
+  for (const pf of state.playerFiles) {
     const slug = pf.path.split('/players/')[1]?.split('/')[0] || '';
-    if (!slug) return;
+    if (!slug) continue;
 
     try {
-      const playerFailures = await reconcileSinglePlayerInventory(slug);
-      if (playerFailures && playerFailures.length > 0) {
-        failures.push({ slug, errors: playerFailures });
+      const result = await reconcileSinglePlayerInventory(slug);
+      if (result.failures.length > 0) {
+        failures.push({ slug, errors: result.failures });
       }
+      stats.written += result.written;
+      stats.deleted += result.deleted;
+      stats.skipped += result.skipped;
     } catch (e) {
       console.error(`Reconcile failed for ${slug}:`, e);
       failures.push({ slug, errors: [`Whole reconcile failed: ${e.message || e}`] });
     }
-  });
-
-  await Promise.all(tasks);
-
-  if (failures.length > 0) {
-    const lines = failures.map(({ slug, errors }) => {
-      return `${slug}:\n  - ` + errors.join('\n  - ');
-    });
-    alert(
-      'Some cards could not be saved to GitHub:\n\n' +
-      lines.join('\n\n') +
-      '\n\nFirebase still has the correct state. Try ending the session ' +
-      'again, or check your network/Cloudflare Worker.'
-    );
   }
+
+  return { failures, stats };
 }
 
 async function reconcileSinglePlayerInventory(slug) {
-  // Collected so reconcileSessionInventoriesToGitHub can show one alert
-  // at the end. Anything pushed here is something the DM should know
-  // about — silently warning to console isn't enough because the player
-  // sees the wrong state next session.
+  // Per-file failures collected here so the parent can decide whether to
+  // alert the DM. We also count writes/deletes/skips for the success
+  // popup — most reconcile updates are no-ops (card still in inventory,
+  // no fields changed) and we want the DM to see we noticed.
   const failures = [];
+  let written = 0, deleted = 0, skipped = 0;
 
   const invRef  = ref(_db, firebaseInventoryPath(state.activeCampaign.id, slug));
   const invSnap = await get(invRef);
@@ -2562,11 +2561,16 @@ async function reconcileSinglePlayerInventory(slug) {
   for (const ghFile of ghFiles) {
     const fb = fbByPath.get(ghFile.path);
     if (fb) {
-      try {
-        await writeReconciledCard(ghFile.path, fb);
-      } catch (e) {
-        console.warn(`Could not update ${ghFile.path}:`, e);
-        failures.push(`update ${ghFile.name}: ${e.message || e}`);
+      // Update path: the helper compares the rendered content to what's
+      // already on disk and skips the write if nothing changed. This is
+      // the big efficiency win — most reconcile updates are no-ops.
+      const result = await writeReconciledCardWithRetry(ghFile.path, fb);
+      if (!result.ok) {
+        failures.push(`update ${ghFile.name}: ${result.error}`);
+      } else if (result.action === 'wrote') {
+        written++;
+      } else {
+        skipped++;
       }
       fbByPath.delete(ghFile.path);   // mark as consumed regardless
     } else {
@@ -2578,6 +2582,8 @@ async function reconcileSinglePlayerInventory(slug) {
       if (!ok.ok) {
         console.warn(`Could not delete ${ghFile.path}:`, ok.error);
         failures.push(`delete ${ghFile.name}: ${ok.error}`);
+      } else {
+        deleted++;
       }
     }
   }
@@ -2612,24 +2618,29 @@ async function reconcileSinglePlayerInventory(slug) {
     seenNames.add(finalName);
 
     const destPath = `${cardsDir}/${finalName}`;
-    try {
-      await writeReconciledCard(destPath, fb, /*creating=*/true);
-    } catch (e) {
-      console.warn(`Could not create ${destPath}:`, e);
-      failures.push(`create ${finalName}: ${e.message || e}`);
+    // Create path: no SHA dance needed (file shouldn't exist), but if it
+    // does exist (race against another writer), GitHub will 422 — small
+    // retry handles that case too.
+    const result = await writeReconciledCardWithRetry(destPath, fb, /*creating=*/true);
+    if (!result.ok) {
+      failures.push(`create ${finalName}: ${result.error}`);
+    } else {
+      written++;
     }
   }
 
   // 3) Update player .md frontmatter with the card_order array
   const orderedPaths = computeCardOrder(fbList, slug);
   try {
-    await savePlayerCardOrder(slug, orderedPaths);
+    const orderResult = await savePlayerCardOrder(slug, orderedPaths);
+    if (orderResult === 'wrote') written++;
+    else if (orderResult === 'skipped') skipped++;
   } catch (e) {
     console.warn(`Could not save card_order for ${slug}:`, e);
     failures.push(`card_order: ${e.message || e}`);
   }
 
-  return failures;
+  return { failures, written, deleted, skipped };
 }
 
 /**
@@ -2673,11 +2684,32 @@ async function deleteWithStaleShaRetry(path, commitMsg) {
 }
 
 /**
- * Writes a single card to GitHub from its Firebase entry. Reuses the entry's
- * _body and _extra fields plus the well-known frontmatter fields. If creating
- * a new file, omits the sha. If updating, fetches a fresh sha first.
+ * Writes a single card to GitHub from its Firebase entry, with two
+ * reliability features:
+ *
+ *   1. Skip-no-op: for updates, we read the existing file and compare its
+ *      content to what we're about to write. If they match, we return
+ *      'skipped' without making a write API call. Most reconcile updates
+ *      ARE no-ops (the card hasn't changed mid-session) and skipping
+ *      them avoids triggering GitHub's eventual-consistency cascade,
+ *      which is the root cause of the 409 wave we saw in round-3 testing.
+ *
+ *   2. Stale-SHA retry: if a write does happen and GitHub returns 409
+ *      (the file was modified between our read and our write), we retry
+ *      up to 3 times with a small backoff, re-reading the SHA each time.
+ *      Same approach as deleteWithStaleShaRetry.
+ *
+ * Returns:
+ *   { ok: true,  action: 'wrote' | 'skipped' }
+ *   { ok: false, error: <message> }
+ *
+ * Never throws.
+ *
+ * @param {string} path
+ * @param {object} fb        Firebase inventory entry
+ * @param {boolean} creating True if we expect the file NOT to exist
  */
-async function writeReconciledCard(path, fb, creating = false) {
+async function writeReconciledCardWithRetry(path, fb, creating = false) {
   const fm = {
     ...(fb._extra || {}),
     name:        fb.name        || '',
@@ -2687,13 +2719,61 @@ async function writeReconciledCard(path, fb, creating = false) {
     generation:  fb.generation  || 1,
     _body:       fb._body       || '',
   };
-  const content = serialiseFrontmatter(fm);
+  const content  = serialiseFrontmatter(fm);
+  const filename = path.split('/').pop();
+
   if (creating) {
-    await writeFile(path, content, `Reconcile: create ${path.split('/').pop()}`);
-  } else {
-    const { sha } = await readFile(path);
-    await writeFile(path, content, `Reconcile: update ${path.split('/').pop()}`, sha);
+    // Create path. If a stale 422 ("file already exists") fires, fall
+    // through to the update path — the file was created by something
+    // else (a race), and we should rewrite it to match our payload.
+    try {
+      await writeFile(path, content, `Reconcile: create ${filename}`);
+      return { ok: true, action: 'wrote' };
+    } catch (e) {
+      const msg = String(e?.message || e);
+      if (!/already\s*exists|422/i.test(msg)) {
+        return { ok: false, error: msg };
+      }
+      // Fall through to update path.
+    }
   }
+
+  // Update path. Up to 3 attempts: read sha, compare, write, retry on 409.
+  // Backoff: 0ms (immediate), 250ms, 500ms.
+  const backoffs = [0, 250, 500];
+  let lastError  = 'unknown failure';
+  for (let attempt = 0; attempt < backoffs.length; attempt++) {
+    if (backoffs[attempt] > 0) await new Promise(r => setTimeout(r, backoffs[attempt]));
+
+    let sha, existingContent;
+    try {
+      ({ sha, content: existingContent } = await readFile(path));
+    } catch (e) {
+      return { ok: false, error: `read for update: ${e.message || e}` };
+    }
+
+    // Skip-no-op: if the file already matches what we'd write, don't
+    // hit the API at all. Saves a round-trip AND avoids triggering
+    // GitHub's content cache invalidation, which is what was causing
+    // the cascade of 409 errors when we wrote many files in a row.
+    if (existingContent === content) {
+      return { ok: true, action: 'skipped' };
+    }
+
+    try {
+      await writeFile(path, content, `Reconcile: update ${filename}`, sha);
+      return { ok: true, action: 'wrote' };
+    } catch (e) {
+      const msg = String(e?.message || e);
+      lastError = msg;
+      if (!/409|422|conflict|sha/i.test(msg)) {
+        // Not a sha conflict — no point retrying.
+        return { ok: false, error: msg };
+      }
+      // Stale sha; loop and retry.
+    }
+  }
+  return { ok: false, error: lastError };
 }
 
 /**
@@ -2710,29 +2790,48 @@ function computeCardOrder(fbList, slug) {
 }
 
 /**
- * Writes card_order to the player .md frontmatter. Idempotent — skips if
- * the order hasn't changed.
+ * Writes card_order to the player .md frontmatter. Idempotent — returns
+ * 'skipped' if the order hasn't changed, 'wrote' if a write happened.
+ * Throws on persistent failure (the caller in
+ * reconcileSinglePlayerInventory catches and adds to the failures list).
+ *
+ * Retries up to 3 times on stale-SHA 409 conflicts, same approach as
+ * writeReconciledCardWithRetry.
  */
 async function savePlayerCardOrder(slug, orderedPaths) {
   const pf = state.playerFiles.find(f => {
     const s = f.path.split('/players/')[1]?.split('/')[0] || '';
     return s === slug;
   });
-  if (!pf) return;
+  if (!pf) return 'skipped';
 
-  try {
+  const backoffs = [0, 250, 500];
+  let lastError  = 'unknown failure';
+  for (let attempt = 0; attempt < backoffs.length; attempt++) {
+    if (backoffs[attempt] > 0) await new Promise(r => setTimeout(r, backoffs[attempt]));
+
     const { content, sha } = await readFile(pf.path);
     const fm = parseFrontmatter(content);
     const existing = Array.isArray(fm.card_order) ? fm.card_order : [];
     const same = existing.length === orderedPaths.length
       && existing.every((p, i) => p === orderedPaths[i]);
-    if (same) return;
+    if (same) return 'skipped';
+
     fm.card_order = orderedPaths;
-    await writeFile(pf.path, serialiseFrontmatter(fm),
-      `Reconcile: card order for ${slug}`, sha);
-  } catch (e) {
-    console.warn(`Could not save card order for ${slug}:`, e);
+    try {
+      await writeFile(pf.path, serialiseFrontmatter(fm),
+        `Reconcile: card order for ${slug}`, sha);
+      return 'wrote';
+    } catch (e) {
+      const msg = String(e?.message || e);
+      lastError = msg;
+      if (!/409|422|conflict|sha/i.test(msg)) {
+        throw e; // not a SHA conflict — surface immediately
+      }
+      // Stale sha; loop and retry.
+    }
   }
+  throw new Error(lastError);
 }
 
 /**
@@ -3195,12 +3294,40 @@ document.addEventListener('DOMContentLoaded', () => {
       } else {
         // Ending: flip session_active first so players' apps stop writing
         // to Firebase, then reconcile back to GitHub, flush pending loot,
-        // and clear the inventory nodes.
+        // and clear the inventory nodes. Reconcile is the slow part —
+        // we update the button text so the DM has a feel for progress.
         await set(ref(_db, `${firebaseCampaignPath(state.activeCampaign.id)}/session_active`), false);
-        btn.textContent = 'Reconciling…';
-        await reconcileSessionInventoriesToGitHub();
+        btn.textContent = 'Saving cards to GitHub…';
+        const { failures, stats } = await reconcileSessionInventoriesToGitHub();
+        btn.textContent = 'Saving pending loot…';
         await flushPendingPersonalLootToGitHub();
+        btn.textContent = 'Clearing Firebase…';
         await clearSessionInventories();
+
+        // Completion popup — explicit user-facing confirmation that the
+        // session has fully written back to GitHub. Shows aggregate
+        // stats so the DM can sanity-check the count of writes vs what
+        // they expected, and lists per-file failures if any.
+        if (failures.length > 0) {
+          const lines = failures.map(({ slug, errors }) =>
+            `${slug}:\n  - ` + errors.join('\n  - ')
+          );
+          alert(
+            `Session ended with ERRORS.\n\n` +
+            `Saved ${stats.written}, deleted ${stats.deleted}, skipped ${stats.skipped} unchanged.\n\n` +
+            `Some cards could not be saved to GitHub:\n\n` +
+            lines.join('\n\n') +
+            `\n\nFirebase still has the correct state. Try ending the ` +
+            `session again, or check your network/Cloudflare Worker.`
+          );
+        } else {
+          alert(
+            `Session ended cleanly.\n\n` +
+            `Saved ${stats.written} card${stats.written === 1 ? '' : 's'}, ` +
+            `deleted ${stats.deleted}, ` +
+            `skipped ${stats.skipped} unchanged.`
+          );
+        }
       }
       // Set the final-state label here so the user sees the right text the
       // instant the operation completes. The Firebase snapshot listener will
