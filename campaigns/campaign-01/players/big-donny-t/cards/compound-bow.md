@@ -9,7 +9,7 @@ value: 60
 name: Compound Bow
 card_type: weapon
 slots: active
-player_slot: hand
+player_slot: active
 generation: 1
 ---
 
