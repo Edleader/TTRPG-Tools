@@ -17,6 +17,13 @@ perk_17: ""
 currency: 0
 hp_current: 20
 spell_slots_spent: 0
+card_order:
+  - campaigns/campaign-01/cards/spells/vertigo.md
+  - campaigns/campaign-01/cards/spells/cauterise.md
+  - campaigns/campaign-01/cards/spells/clot.md
+  - campaigns/campaign-01/cards/items/tarp.md
+  - campaigns/campaign-01/cards/items/field-medkit.md
+  - campaigns/campaign-01/cards/items/field-medkit.md
 ---
 
 # Cole Mercer (Andrew)
