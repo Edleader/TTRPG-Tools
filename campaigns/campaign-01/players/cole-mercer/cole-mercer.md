@@ -29,6 +29,9 @@ card_order:
 # Cole Mercer (Andrew)
 
 ## Non-Card Items
+- Inflatable flamingo
+- Sheet
+- Belt
 
 ## Background
 
