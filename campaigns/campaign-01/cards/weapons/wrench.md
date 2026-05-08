@@ -4,12 +4,13 @@ name: Wrench
 generation: 1
 stat: Might
 hands_required: 1
-difficulty: "Simple (-1)"
+difficulty: Simple (-1)
 range: 2m
-effect: 2+d4
+effect: 2 + d4
 slots: active
+uses: 1
+requirements: Level 1, Might 10+
 value: 12
-notes: Not designed for fighting. Works anyway.
 ---
 
-A heavy adjustable spanner. It was designed to fix pipes. It turns out it also breaks faces.
+A heavy adjustable wrench. Not designed for fighting. Works anyway.

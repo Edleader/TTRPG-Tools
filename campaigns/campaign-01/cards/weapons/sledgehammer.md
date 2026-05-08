@@ -4,12 +4,13 @@ name: Sledgehammer
 generation: 1
 stat: Might
 hands_required: 2
-difficulty: "Standard (-2)"
+difficulty: Standard (-2)
 range: 2m
-effect: 3+d6
+effect: 3 + d6
 slots: active
+uses: 1
+requirements: Level 1, Might 10+
 value: 25
-notes: Slow, heavy, definitive
 ---
 
-A demolition hammer. Slow to wind up, impossible to stop once it lands. Whatever it hits stays hit.
+A short-handled sledgehammer repurposed from construction work. Slow, heavy, and definitive.

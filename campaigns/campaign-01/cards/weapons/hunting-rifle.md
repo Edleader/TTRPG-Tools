@@ -4,12 +4,13 @@ name: Hunting Rifle
 generation: 1
 stat: Finesse
 hands_required: 2
-difficulty: "Standard (-2)"
+difficulty: Standard (-2)
 range: 40m
-effect: 3+d6
+effect: 3 + d6
 slots: active
+uses: 1
+requirements: Level 1, Finesse 10+
 value: 75
-notes: Bolt-action; slow follow-up
 ---
 
-A bolt-action hunting rifle. Accurate at extreme range. Each shot requires manually cycling the bolt — follow-up shots are slow.
+A bolt-action hunting rifle. Accurate at range, slow to follow up. Not designed for war — effective anyway.

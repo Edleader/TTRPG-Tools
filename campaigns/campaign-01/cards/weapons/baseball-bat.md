@@ -4,12 +4,13 @@ name: Baseball Bat
 generation: 1
 stat: Might
 hands_required: 2
-difficulty: "Simple (-1)"
+difficulty: Simple (-1)
 range: 2m
-effect: 2+d4
+effect: 2 + d4
 slots: active
+uses: 1
+requirements: Level 1, Might 10+
 value: 15
-notes: Classic
 ---
 
-A wooden or aluminium bat. Satisfying swing, wide arc, and nobody questions what it is.
+A standard wooden or aluminium bat repurposed as a weapon. Heavy enough to hurt, simple enough to swing.

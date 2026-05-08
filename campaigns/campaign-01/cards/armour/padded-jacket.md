@@ -2,10 +2,10 @@
 card_type: armour
 name: Padded Jacket
 generation: 1
-dr: 1
 slots: active
+dr: 1
+requirements: Level 1
 value: 50
-notes: Thick padded jacket with reinforced shoulders. Not purpose-built but better than nothing.
 ---
 
-A heavy padded jacket with reinforced shoulders and extra layers at impact zones. Not designed for combat protection — but it was designed to absorb punishment, which amounts to the same thing.
+A thick padded jacket with reinforced shoulders. Not purpose-built as armour, but considerably better than going without. Covers upper body.

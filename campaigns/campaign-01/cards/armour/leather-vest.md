@@ -2,10 +2,10 @@
 card_type: armour
 name: Leather Vest
 generation: 1
-dr: 2
 slots: active
+dr: 2
+requirements: Level 1
 value: 200
-notes: Heavy leather with additional padding at impact zones. Light enough to move freely.
 ---
 
-A purpose-built leather vest with hardened panels at the chest and back. Heavy enough to matter, light enough not to slow you down.
+A heavy leather vest with additional padding sewn into impact zones. Light enough to move in freely. Covers upper body.

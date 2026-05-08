@@ -3,8 +3,7 @@ card_type: ability
 name: Focussed Disarm
 generation: 1
 slots: active
+requirements: Level 1
 ---
 
-**To play:** Primary Action
-
-Make a Might roll (difficulty −5) against a target within 2m. Success: knock the weapon from their hands.
+Primary Action. Make a difficulty -5 Might roll against a target within 2 m. On a success, you knock the weapon out of their hands.

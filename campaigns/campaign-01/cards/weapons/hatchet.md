@@ -4,12 +4,13 @@ name: Hatchet
 generation: 1
 stat: Might
 hands_required: 1
-difficulty: "Standard (-2)"
+difficulty: Standard (-2)
 range: 2m
-effect: 2+d4
+effect: 2 + d4
 slots: active
+uses: 1
+requirements: Level 1, Might 10+
 value: 30
-notes: Compact; carries everywhere
 ---
 
-A small axe head on a short handle. Light enough to carry everywhere. Heavy enough to matter.
+A compact single-handed hatchet. As useful for splitting kindling as for more urgent applications.

@@ -4,12 +4,13 @@ name: Throwing Knife
 generation: 1
 stat: Finesse
 hands_required: 1
-difficulty: "Simple (-1)"
+difficulty: Simple (-1)
 range: 10m
-effect: 1+d4
+effect: 1 + d4
 slots: active
+uses: 1
+requirements: Level 1, Finesse 10+
 value: 20
-notes: Optimised for throwing; usable in melee
 ---
 
-Weighted and balanced for ranged use. Can be used in melee if needed, but this is its natural environment.
+A balanced knife optimised for throwing. Usable in melee at a pinch.

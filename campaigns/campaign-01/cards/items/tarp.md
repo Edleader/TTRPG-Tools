@@ -3,10 +3,7 @@ card_type: item
 name: Tarp
 generation: 1
 slots: hand
-effect: "Large heavy-duty tarpaulin. Shelter, concealment, improvised stretcher."
-consumable: false
 value: 12
-notes: Reusable
 ---
 
-A large heavy-duty waterproof tarpaulin. Can be rigged as shelter, used for concealment, or pressed into service as an improvised stretcher.
+A large heavy-duty tarpaulin. Useful for shelter, concealment, covering things you'd rather not explain, or improvising a stretcher.

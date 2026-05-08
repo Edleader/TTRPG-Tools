@@ -4,12 +4,13 @@ name: Improvised Crossbow
 generation: 1
 stat: Finesse
 hands_required: 2
-difficulty: "Standard (-2)"
+difficulty: Standard (-2)
 range: 20m
-effect: 2+d6
+effect: 2 + d6
 slots: active
+uses: 1
+requirements: Level 1, Finesse 10+
 value: 45
-notes: Hand-built; quieter than a firearm
 ---
 
-A hand-built crossbow. Slower to reload than a bow, but easier to hold at full draw. Quieter than any firearm.
+A hand-built crossbow assembled from salvaged components. Quieter than a firearm and capable of decent range without ammunition dependency.

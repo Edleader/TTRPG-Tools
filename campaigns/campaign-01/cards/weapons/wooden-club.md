@@ -4,12 +4,13 @@ name: Wooden Club
 generation: 1
 stat: Might
 hands_required: 1
-difficulty: "Simple (-1)"
+difficulty: Simple (-1)
 range: 2m
-effect: 1+d4
+effect: 1 + d4
 slots: active
+uses: 1
+requirements: Level 1, Might 10+
 value: 10
-notes: Blunt and simple
 ---
 
-A length of wood. Nothing more. Effective enough in the hands of someone who knows how to swing it.
+A length of wood, weighted at one end. Blunt, heavy, and surprisingly durable.

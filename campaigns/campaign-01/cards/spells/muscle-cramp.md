@@ -4,12 +4,12 @@ name: Muscle Cramp
 generation: 1
 stat: Mind
 hands_required: 1
-difficulty: "Standard (-2)"
+difficulty: Standard (-2)
 range: 20m
-effect: "Target cannot move on their next turn"
 slots: active
+uses: 1
+requirements: Level 1, Mind 10+
 spell_slots_cost: 1
-notes: —
 ---
 
-Forces a full-body muscle contraction in the target. They can still act — they just can't go anywhere while they ride it out.
+The caster induces sudden involuntary muscle contractions in the target. Brief but debilitating. The target can not move on their next turn.

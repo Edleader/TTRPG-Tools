@@ -3,8 +3,7 @@ card_type: ability
 name: Time Slip
 generation: 1
 slots: active
+requirements: Level 1
 ---
 
-**To play:** Primary Action
-
-Take twice your movement and play two Hand cards this turn.
+Primary Action. You may take twice your movement, and play two Hand Cards this turn.

@@ -4,12 +4,13 @@ name: Short Blade
 generation: 1
 stat: Finesse
 hands_required: 1
-difficulty: "Standard (-2)"
+difficulty: Standard (-2)
 range: 2m
-effect: 1+d6
+effect: 1 + d6
 slots: active
+uses: 1
+requirements: Level 1, Finesse 10+
 value: 40
-notes: Military surplus or salvaged
 ---
 
-A short combat blade — military surplus or carefully salvaged. Requires training to use well, but rewards it.
+A repurposed short blade — military surplus, kitchen steel, or something worse. Functional either way.

@@ -4,12 +4,13 @@ name: Flare Gun
 generation: 1
 stat: Might
 hands_required: 1
-difficulty: "Standard (-2)"
+difficulty: Standard (-2)
 range: 10m
-effect: 2+d4
+effect: 2 + d4
 slots: active
+uses: 1
+requirements: Level 1, Might 10+
 value: 30
-notes: Technically a signalling device
 ---
 
-A single-shot pistol that fires a burning magnesium flare. Technically for signalling distress. Works fine for causing it too.
+A single-shot flare pistol repurposed for close-range use. Limited range, uncomfortable accuracy, but hard to argue with.
