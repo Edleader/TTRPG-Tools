@@ -19,9 +19,7 @@ spell_slots_spent: 0
 card_order:
   - campaigns/campaign-01/players/big-donny-t/cards/focussed-disarm.md
   - campaigns/campaign-01/players/big-donny-t/cards/motorcycle-helmet.md
-  - campaigns/campaign-01/players/big-donny-t/cards/compound-bow.md
   - campaigns/campaign-01/players/big-donny-t/cards/compound-bow-2.md
-  - campaigns/campaign-01/players/big-donny-t/cards/field-medkit.md
   - campaigns/campaign-01/players/big-donny-t/cards/lighter.md
 ---
 
