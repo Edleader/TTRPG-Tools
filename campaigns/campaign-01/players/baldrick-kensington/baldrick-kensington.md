@@ -18,12 +18,10 @@ hp_current: 32
 spell_slots_spent: 0
 card_order:
   - campaigns/campaign-01/players/baldrick-kensington/cards/taunt.md
+  - campaigns/campaign-01/cards/weapons/combat-baton.md
   - campaigns/campaign-01/players/baldrick-kensington/cards/focussed-disarm.md
-  - campaigns/campaign-01/players/baldrick-kensington/cards/bull-rush.md
   - campaigns/campaign-01/players/baldrick-kensington/cards/leather-vest.md
-  - campaigns/campaign-01/players/baldrick-kensington/cards/lung-constriction.md
-  - campaigns/campaign-01/players/baldrick-kensington/cards/motorcycle-helmet.md
-  - campaigns/campaign-01/players/baldrick-kensington/cards/slingshot.md
+  - campaigns/campaign-01/cards/spells/fever.md
 ---
 
 # Baldrick "Ballsy" Kensington III (Ben)
