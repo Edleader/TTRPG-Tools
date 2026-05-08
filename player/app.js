@@ -3132,8 +3132,11 @@ function renderGroupLootReady(session) {
   const readyBtn = document.getElementById('btn-gl-ready');
   readyBtn.textContent = _gloot.ready ? 'Unready' : 'Ready';
   // Block Ready while there are cards still parked in Incoming (claimed
-  // but not yet placed into Active/Hand/Discard).
-  readyBtn.disabled = glootIncomingPending().length > 0 && !_gloot.ready;
+  // but not yet placed into Active/Hand/Discard) OR while slots are
+  // overflowing (5/4 hand etc.). Always allow Unready so a player can
+  // back out without being stuck.
+  const blockedFromReady = glootIncomingPending().length > 0 || !isGlootValid();
+  readyBtn.disabled = blockedFromReady && !_gloot.ready;
 
   // Finalise button — enabled only when every known player is Ready.
   // In trade phase, leftover holdingPool entries are allowed (they return to
@@ -3165,6 +3168,27 @@ function renderGroupLootReady(session) {
  * Validates the player's working zones (slot limits + native-slot rule).
  * Toggles validation message and footer button states.
  */
+/**
+ * Returns true when this player's working zones obey slot limits and
+ * the native-slot rule. Used both by validateGroupLoot (for the red
+ * warning text) AND by the Ready/Finalise gates so the player can't
+ * sneak past validation by clicking Ready while a 5/4 warning is up.
+ *
+ * Round-6 T-flicker-1 caught this — the warning was visible but Ready
+ * was still clickable.
+ */
+function isGlootValid() {
+  const fm        = state.fm;
+  const maxActive = fm.active_slots || 4;
+  const maxHand   = fm.hand_slots   || 4;
+  const active = glootActive();
+  const hand   = glootHand();
+  if (active.length > maxActive) return false;
+  if (hand.length   > maxHand)   return false;
+  if (active.some(c => (c.slots || 'hand').toLowerCase() === 'hand')) return false;
+  return true;
+}
+
 function validateGroupLoot() {
   const fm        = state.fm;
   const maxActive = fm.active_slots || 4;
@@ -3601,6 +3625,12 @@ async function toggleGlootReady() {
   // must be placed into Active/Hand/Discard, or in Phase 1 into Holding).
   if (!_gloot.ready && glootIncomingPending().length > 0) {
     alert('Place every card in Incoming before you Ready up.');
+    return;
+  }
+  // ALSO require slot limits to be respected. Going Ready while
+  // overflowing would let the player commit an inflated hand/active.
+  if (!_gloot.ready && !isGlootValid()) {
+    alert('Your slots are overflowing. Move or discard a card before you Ready up.');
     return;
   }
   _gloot.ready = !_gloot.ready;
