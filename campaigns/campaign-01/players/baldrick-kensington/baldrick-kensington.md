@@ -20,12 +20,11 @@ currency: 0
 card_order:
   - campaigns/campaign-01/players/baldrick-kensington/cards/taunt.md
   - campaigns/campaign-01/players/baldrick-kensington/cards/combat-baton.md
+  - campaigns/campaign-01/players/baldrick-kensington/cards/improvised-crossbow.md
   - campaigns/campaign-01/players/baldrick-kensington/cards/focussed-disarm.md
   - campaigns/campaign-01/players/baldrick-kensington/cards/leather-vest.md
   - campaigns/campaign-01/players/baldrick-kensington/cards/fever.md
-  - campaigns/campaign-01/players/baldrick-kensington/cards/flare-gun.md
-  - campaigns/campaign-01/players/baldrick-kensington/cards/improvised-crossbow.md
-  - campaigns/campaign-01/players/baldrick-kensington/cards/static-discharge.md
+  - campaigns/campaign-01/cards/weapons/flare-gun.md
 ---
 
 # Baldrick "Ballsy" Kensington III (Ben)
