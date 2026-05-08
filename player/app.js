@@ -3250,12 +3250,9 @@ async function gloot_claimGroupCard(card) {
     _extra:      card._extra || {},
   });
 
-  // Auto-unready if previously ready (but only matters if we hit Ready before
-  // claiming a holding card later in trade phase — same idea here for safety).
-  if (_gloot.ready) {
-    _gloot.ready = false;
-    await writeMyGroupState();
-  }
+  // Claiming counts as a state change — force unready so Finalise
+  // can't fire until the player re-confirms.
+  await unreadyIfReady();
 
   renderGroupLoot();
 }
@@ -3299,11 +3296,9 @@ async function gloot_claimHoldingCard(card) {
     _extra:      cardData._extra || {},
   });
 
-  // Auto-unready (player must place this card before they can finish)
-  if (_gloot.ready) {
-    _gloot.ready = false;
-    await writeMyGroupState();
-  }
+  // Claiming counts as a state change — force unready so the player
+  // must place this card and re-confirm before finalise can fire.
+  await unreadyIfReady();
 
   renderGroupLoot();
 }
@@ -3378,6 +3373,10 @@ async function gloot_takeBackHolding(card) {
     _body:         card._body || '',
     _extra:        card._extra || {},
   });
+
+  // Take Back is a state change — force unready so the player has to
+  // place the returned card before they can finalise.
+  await unreadyIfReady();
 
   // Force an immediate local re-render — the FB onValue listener will
   // fire shortly with the same final state but its timing isn't
@@ -3562,8 +3561,20 @@ async function handleGlootDrop({ event, card, fromZone }) {
       break;
   }
 
-  // Persist Holding to Firebase if the holding set changed.
-  if (target === 'holding' || fromKey === 'holding') {
+  // Any successful drop is a state change. The early-return guards at
+  // the top of this handler already filter out illegal targets and same-
+  // zone no-ops, so reaching this line means something genuinely moved.
+  // Force-unready: a player who'd already clicked Ready needs to re-
+  // confirm after every change. Silent — the Ready pill flipping back
+  // to grey is the only signal, plus the button text reverting to
+  // "Ready". (writeMyGroupState below also picks up holding changes,
+  // which is what the existing branch covered.)
+  if (_gloot.ready) {
+    _gloot.ready = false;
+    await writeMyGroupState();
+  } else if (target === 'holding' || fromKey === 'holding') {
+    // Holding-set changes always need to flush to Firebase even when
+    // we weren't Ready, so the strip stays in sync for everyone.
     await writeMyGroupState();
   }
 
@@ -3619,6 +3630,22 @@ async function writeMyGroupState() {
 }
 
 // ─── Group loot — Ready / Finalise ───────────────────────────────────────────
+
+/**
+ * Force-unready this player. Call after any state change that invalidates
+ * the player's earlier "I'm done" claim — drag-drops, claim transactions,
+ * Take Back, etc. Silent: no alert. The Ready pill flips back to grey, the
+ * button text returns to "Ready", and the Finalise button on every player's
+ * screen drops out of the all-ready state until everyone re-confirms.
+ *
+ * No-ops if the player isn't currently Ready, so it's safe to call even
+ * when nothing changed.
+ */
+async function unreadyIfReady() {
+  if (!_gloot.ready) return;
+  _gloot.ready = false;
+  await writeMyGroupState();
+}
 
 async function toggleGlootReady() {
   // Ready requires the Incoming holding-pen to be empty (every claimed card
