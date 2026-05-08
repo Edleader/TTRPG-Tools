@@ -15,7 +15,7 @@ swaps_remaining: 0
 perk_5: ""
 perk_10: ""
 perk_17: ""
-hp_current: 32
+hp_current: 28
 spell_slots_spent: 0
 card_order:
   - campaigns/campaign-01/players/baldrick-kensington/cards/baseball-bat.md
