@@ -20,6 +20,7 @@ card_order:
   - campaigns/campaign-01/players/big-donny-t/cards/focussed-disarm.md
   - campaigns/campaign-01/players/big-donny-t/cards/motorcycle-helmet.md
   - campaigns/campaign-01/players/big-donny-t/cards/lighter.md
+  - campaigns/campaign-01/cards/abilities/hold-the-line.md
 ---
 
 # Big Donny T (Matt)
