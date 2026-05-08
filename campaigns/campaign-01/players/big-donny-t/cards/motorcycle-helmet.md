@@ -5,7 +5,7 @@ value: 100
 name: Motorcycle Helmet
 card_type: armour
 slots: active
-player_slot: hand
+player_slot: active
 generation: 1
 ---
 
