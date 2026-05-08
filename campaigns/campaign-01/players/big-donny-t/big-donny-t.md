@@ -33,5 +33,6 @@ card_order:
 - This comes from a place of cowardice and overcompensating for previously being beaten by his wife.
 - My closet is full of skeletons, having hired hit-men to create 'accidents' for those that opposed me, engaged with the mafia to offset my every growing debt, and killing a driver of mine with my own two hands for not running a red light.
 - The blip in time comes as a relief, with presumably all financial and criminal records inaccessible, only heightening my lust for deception and skullduggery more knowing I cannot be caught.
+Testicles
 
 ## Notes
