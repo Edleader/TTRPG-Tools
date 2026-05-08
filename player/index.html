@@ -132,17 +132,48 @@
       <div class="perks-list" id="perks-list"></div>
     </section>
 
-    <!-- ── ACTIVE CARDS ───────────────────────────── -->
-    <section class="sheet-section">
-      <div class="section-header" id="active-section-header">Active Slots</div>
-      <div class="cards-grid" id="active-cards-grid"></div>
-    </section>
+    <!-- ── CARDS + CURRENCY ROW ──────────────────────
+         Active and Hand stack vertically on the left; Currency sits as
+         a tall sidebar on the right. Currency wraps below cards on
+         narrow screens (see CSS). -->
+    <div class="cards-and-currency">
 
-    <!-- ── HAND CARDS ─────────────────────────────── -->
-    <section class="sheet-section">
-      <div class="section-header" id="hand-section-header">Hand</div>
-      <div class="cards-grid" id="hand-cards-grid"></div>
-    </section>
+      <div class="cards-stack">
+        <!-- ── ACTIVE CARDS ───────────────────────── -->
+        <section class="sheet-section">
+          <div class="section-header" id="active-section-header">Active Slots</div>
+          <div class="cards-grid" id="active-cards-grid"></div>
+        </section>
+
+        <!-- ── HAND CARDS ─────────────────────────── -->
+        <section class="sheet-section">
+          <div class="section-header" id="hand-section-header">Hand</div>
+          <div class="cards-grid" id="hand-cards-grid"></div>
+        </section>
+      </div>
+
+      <!-- ── CURRENCY SIDEBAR ─────────────────────────
+           Treated like HP/spells: per-character, mirrored to Firebase
+           during a session, written back to GitHub on debounce. -->
+      <section class="sheet-section currency-section">
+        <div class="section-header">Currency</div>
+        <div class="currency-amount" id="currency-amount">0</div>
+        <div class="currency-quick-row">
+          <button class="btn btn-sm" id="btn-currency-minus-10" disabled>−10</button>
+          <button class="btn btn-sm" id="btn-currency-minus-1"  disabled>−1</button>
+          <button class="btn btn-sm" id="btn-currency-plus-1"   disabled>+1</button>
+          <button class="btn btn-sm" id="btn-currency-plus-10"  disabled>+10</button>
+        </div>
+        <div class="currency-custom-row">
+          <input type="number" id="currency-custom-amount" class="hp-custom-input" placeholder="Amount" min="1" disabled>
+        </div>
+        <div class="currency-custom-row">
+          <button class="btn btn-sm" id="btn-currency-add"    disabled>Add</button>
+          <button class="btn btn-sm btn-secondary" id="btn-currency-remove" disabled>Remove</button>
+        </div>
+      </section>
+
+    </div>
 
     <!-- ── REST BUTTONS ───────────────────────────── -->
     <section class="sheet-section rest-section">
@@ -363,6 +394,25 @@
       </p>
       <div class="personal-loot-actions">
         <button class="btn btn-sm" id="btn-personal-loot-ok">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── SESSION-ENDED OVERLAY ───────────────────────────
+       Fires only on the active→inactive transition while the player is
+       logged in. Replaces the player UI so they can't poke at stale
+       state during reconcile. OK takes them back to the login screen
+       (campaign + character select).
+       ─────────────────────────────────────────────── -->
+  <div id="session-ended-overlay" class="loot-notify-overlay" style="display:none" role="dialog" aria-modal="true" aria-label="Session ended">
+    <div class="personal-loot-card">
+      <div class="loot-notify-title">Session ended</div>
+      <p class="personal-loot-sub">
+        The GM has ended the session. Your card state has been saved.
+        Click OK to return to the character-select screen.
+      </p>
+      <div class="personal-loot-actions">
+        <button class="btn btn-sm" id="btn-session-ended-ok">OK</button>
       </div>
     </div>
   </div>

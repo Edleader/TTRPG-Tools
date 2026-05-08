@@ -16,6 +16,7 @@ perk_10: ""
 perk_17: ""
 hp_current: 30
 spell_slots_spent: 0
+currency: 0
 ---
 
 # Ryan Calder (Gibbo)

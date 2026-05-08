@@ -65,6 +65,7 @@ const state = {
   currentHp:      0,
   maxSpellSlots:  0,
   spentSlots:     0,   // number of spent spell slots (tapped)
+  currency:       0,   // single-number currency, mirrors HP design
 
   // Session state
   sessionActive:  false,
@@ -74,6 +75,9 @@ const state = {
 
   // Debounce timer for HP writes
   _hpTimer: null,
+  // Debounce timer for currency writes (separate from HP since the two
+  // can change simultaneously and shouldn't share a write window).
+  _currencyTimer: null,
 
   // Single in-memory inventory of card objects this player owns.
   //
@@ -336,14 +340,17 @@ function loadCharacter() {
   state.currentHp    = typeof fm.hp_current === 'number' ? fm.hp_current : state.maxHp;
   state.maxSpellSlots = calcMaxSpellSlots(fm.mind || 0, fm.level || 1);
   state.spentSlots   = typeof fm.spell_slots_spent === 'number' ? fm.spell_slots_spent : 0;
+  state.currency     = typeof fm.currency === 'number' ? fm.currency : 0;
   // Clamp in case stats changed
   state.currentHp    = Math.max(0, Math.min(state.maxHp, state.currentHp));
   state.spentSlots   = Math.max(0, Math.min(state.maxSpellSlots, state.spentSlots));
+  state.currency     = Math.max(0, state.currency);
 
   renderHeader();
   renderHp();
   renderSpellSlots();
   renderPerks();
+  renderCurrency();
 
   // Show a placeholder in the card grids until we know whether to render from
   // GitHub (session inactive) or wait for Firebase (session active).
@@ -966,6 +973,82 @@ function pushHpToFirebase() {
 }
 
 // =====================================================
+// CURRENCY
+// =====================================================
+
+/**
+ * Renders the currency value into the player sheet sidebar.
+ */
+function renderCurrency() {
+  const el = document.getElementById('currency-amount');
+  if (el) el.textContent = String(state.currency);
+}
+
+/**
+ * Adjusts the player's currency by `delta` (positive or negative).
+ * Hard floor at 0 — attempting to remove more than the current balance
+ * shows an alert and is a no-op. Mirrors HP's session-active gate and
+ * debounce-to-GitHub design.
+ */
+function adjustCurrency(delta) {
+  if (!requireSessionActive('change currency')) return;
+  if (!Number.isFinite(delta) || delta === 0) return;
+  const next = state.currency + delta;
+  if (next < 0) {
+    alert(`Not enough currency — you only have ${state.currency}.`);
+    return;
+  }
+  state.currency = next;
+  renderCurrency();
+  pushCurrencyToFirebase();
+  scheduleCurrencySave();
+}
+
+/**
+ * Pushes the current currency value into Firebase so the DM panel and
+ * any other tabs see it live. Same shape as pushHpToFirebase.
+ */
+function pushCurrencyToFirebase() {
+  const playerRef = ref(db, firebasePlayerPath(state.campaignId, state.characterSlug));
+  update(playerRef, { currency: state.currency })
+    .catch(e => console.warn('Firebase currency push failed:', e));
+}
+
+/**
+ * Schedules a debounced GitHub write of the currency back to the
+ * player .md frontmatter. Same debounce window as HP so back-to-back
+ * changes coalesce into one commit.
+ */
+function scheduleCurrencySave() {
+  clearTimeout(state._currencyTimer);
+  state._currencyTimer = setTimeout(saveCurrencyToGitHub, HP_DEBOUNCE_MS);
+}
+
+/**
+ * Persists currency to the player .md frontmatter. Idempotent — bails
+ * out silently if there's no character path set (e.g. during logout).
+ */
+async function saveCurrencyToGitHub() {
+  if (!state.characterPath) return;
+  try {
+    const { content, sha } = await readFile(state.characterPath);
+    const fm = parseFrontmatter(content);
+    if (typeof fm.currency === 'number' && fm.currency === state.currency) return;
+    fm.currency = state.currency;
+    const { sha: newSha } = await writeFile(
+      state.characterPath,
+      serialiseFrontmatter(fm),
+      `Update currency for ${fm.name}`,
+      sha
+    );
+    state.characterSha = newSha;
+    state.fm           = fm;
+  } catch (e) {
+    console.error('Currency save failed:', e);
+  }
+}
+
+// =====================================================
 // FIREBASE — session state + rest approval
 // =====================================================
 
@@ -1019,6 +1102,12 @@ function applyCampaignSnapshot(data) {
     'btn-hp-heal',
     'btn-short-rest',
     'btn-long-rest',
+    'btn-currency-minus-10',
+    'btn-currency-minus-1',
+    'btn-currency-plus-1',
+    'btn-currency-plus-10',
+    'btn-currency-add',
+    'btn-currency-remove',
   ];
   for (const id of lockedWhenInactive) {
     const el = document.getElementById(id);
@@ -1031,6 +1120,8 @@ function applyCampaignSnapshot(data) {
   });
   const customAmount = document.getElementById('hp-custom-amount');
   if (customAmount) customAmount.disabled = !state.sessionActive;
+  const currencyAmount = document.getElementById('currency-custom-amount');
+  if (currencyAmount) currencyAmount.disabled = !state.sessionActive;
 
   // Inventory subscriber lifecycle: subscribe on session start, unsubscribe
   // on session end. The DM seeds Firebase before flipping session_active to
@@ -1039,10 +1130,15 @@ function applyCampaignSnapshot(data) {
     subscribeSessionInventory();
   } else if (!state.sessionActive && wasActive) {
     unsubscribeSessionInventory();
-    // Reload from GitHub now that we've left Firebase-truth mode. The DM's
-    // reconcile will have already flushed our last state to GitHub.
-    loadAndRenderCards().catch(e =>
-      console.warn('Post-session inventory reload failed:', e));
+    // Show the session-ended overlay over the player UI. We don't reload
+    // from GitHub mid-overlay — the reconcile may still be writing, and
+    // showing stale GitHub state here is the exact bug we're fixing.
+    // Clicking OK calls logout(), which tears state down and returns to
+    // the login screen. (If for any reason the overlay can't show — e.g.
+    // a bug in the DOM lookup — we still trigger logout in the OK
+    // handler.)
+    const endedOverlay = document.getElementById('session-ended-overlay');
+    if (endedOverlay) endedOverlay.style.display = '';
   }
 
   // First-snapshot render gate: on initial login (or refresh) we deferred
@@ -1067,6 +1163,15 @@ function applyCampaignSnapshot(data) {
   if (typeof remoteHp === 'number' && remoteHp !== state.currentHp) {
     state.currentHp = Math.max(0, Math.min(state.maxHp, remoteHp));
     renderHp();
+  }
+
+  // Live currency sync — same pattern. Picks up DM Distribute Currency
+  // writes and any change from another tab. Hard floor at 0 mirrors
+  // the player-side guard.
+  const remoteCurrency = playerData.currency;
+  if (typeof remoteCurrency === 'number' && remoteCurrency !== state.currency) {
+    state.currency = Math.max(0, remoteCurrency);
+    renderCurrency();
   }
 
   // Rest approval?
@@ -1156,7 +1261,13 @@ function subscribeSessionInventory() {
     state.inventory       = cards;
     state._invFromFirebase = true;
     refreshDerivedCardLists();
-    if (typeof renderInventoryUI === 'function') renderInventoryUI();
+    // While a group-loot commit is in flight we deliberately suppress
+    // main-sheet re-renders to avoid the flicker of intermediate states
+    // (each fbInventoryAdd/Remove fires its own snapshot). Data is still
+    // up to date; runMyCommit calls renderInventoryUI() once at the end.
+    if (!state._commitInFlight && typeof renderInventoryUI === 'function') {
+      renderInventoryUI();
+    }
 
     // Trade and group-loot overlays render their "Your Cards" panes off
     // state.inventory, so nudge them to re-render whenever the FB snapshot
@@ -3607,6 +3718,15 @@ async function runMyCommit() {
   const readyBtn = document.getElementById('btn-gl-ready');
   if (readyBtn) readyBtn.disabled = true;
 
+  // Suppress main-sheet re-renders while commit is in flight. Each
+  // fbInventoryAdd/Remove/Update fires its own FB snapshot, and rendering
+  // the main sheet at every intermediate state caused visible flicker
+  // ("phantom" cards appearing too-many-in-hand for a beat) until commit
+  // finished. We still update state.inventory so the data is correct;
+  // we just stop painting it. The gloot overlay (which is closing anyway)
+  // is left alone.
+  state._commitInFlight = true;
+
   const slug = state.characterSlug;
   try {
     await commitMyGroupLootResult();
@@ -3616,6 +3736,8 @@ async function runMyCommit() {
     finaliseBtn.dataset.committing = '';
     finaliseBtn.disabled    = false;
     finaliseBtn.textContent = 'Finalise';
+    state._commitInFlight = false;
+    renderInventoryUI();
     return;
   }
 
@@ -3653,6 +3775,11 @@ async function runMyCommit() {
   // Close MY overlay — the cleanup above closes everyone else's via the
   // session-null snapshot.
   closeGroupLoot();
+
+  // Commit done — release the render gate and paint the final state once,
+  // so the main sheet catches up to whatever Firebase converged to.
+  state._commitInFlight = false;
+  renderInventoryUI();
 }
 
 /**
@@ -4239,6 +4366,10 @@ function logout() {
   document.getElementById('select-character').disabled                  = true;
   document.getElementById('char-loading-spinner').style.display         = 'none';
   document.getElementById('btn-confirm-character').style.display        = 'none';
+  // Hide any overlays that might have been open at logout time so the
+  // login screen isn't blocked by them on next login.
+  const endedOverlay = document.getElementById('session-ended-overlay');
+  if (endedOverlay) endedOverlay.style.display = 'none';
   showScreen('login-screen');
 }
 
@@ -4301,6 +4432,31 @@ document.addEventListener('DOMContentLoaded', () => {
     if (amt > 0) { adjustHp(+amt); input.value = ''; }
   });
 
+  // Currency controls. Quick row: -10 -1 +1 +10. Add/Remove read the
+  // amount input and clear it on click (per user spec).
+  const wireCurrencyQuick = (id, delta) => {
+    const btn = document.getElementById(id);
+    if (btn) btn.addEventListener('click', () => adjustCurrency(delta));
+  };
+  wireCurrencyQuick('btn-currency-minus-10', -10);
+  wireCurrencyQuick('btn-currency-minus-1',  -1);
+  wireCurrencyQuick('btn-currency-plus-1',   +1);
+  wireCurrencyQuick('btn-currency-plus-10', +10);
+  const wireCurrencyAddRemove = (id, sign) => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      const input = document.getElementById('currency-custom-amount');
+      const amt   = parseInt(input.value, 10);
+      if (Number.isFinite(amt) && amt > 0) {
+        adjustCurrency(sign * amt);
+      }
+      input.value = '';
+    });
+  };
+  wireCurrencyAddRemove('btn-currency-add',    +1);
+  wireCurrencyAddRemove('btn-currency-remove', -1);
+
   // Spell slots (tap to toggle)
   document.getElementById('spell-bubbles').addEventListener('click', (e) => {
     const btn = e.target.closest('.spell-bubble');
@@ -4324,6 +4480,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Logout / switch
   document.getElementById('btn-logout').addEventListener('click', logout);
+
+  // Session-ended overlay OK button — DM ended the session while this
+  // player was logged in. Treat it as a logout: the player should NOT
+  // see stale state, and re-login is cheap.
+  const sessionEndedOk = document.getElementById('btn-session-ended-ok');
+  if (sessionEndedOk) {
+    sessionEndedOk.addEventListener('click', () => {
+      const overlay = document.getElementById('session-ended-overlay');
+      if (overlay) overlay.style.display = 'none';
+      logout();
+    });
+  }
 
   // Arrange Cards overlay buttons
   document.getElementById('btn-arrange-cards').addEventListener('click', () => {

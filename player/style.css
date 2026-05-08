@@ -442,6 +442,63 @@ input:disabled,
   padding:               0.75rem 0.85rem;
 }
 
+/* ── Cards + Currency layout ───────────────────────────────────
+   Active and Hand sections stack on the left; Currency sits as a
+   sidebar on the right. On narrow viewports the currency wraps
+   underneath. */
+.cards-and-currency {
+  display:   flex;
+  gap:       0.85rem;
+  flex-wrap: wrap;
+}
+.cards-stack {
+  flex:           1;
+  min-width:      0;
+  display:        flex;
+  flex-direction: column;
+  gap:            0.85rem;
+}
+.currency-section {
+  flex:           0 0 200px;
+  display:        flex;
+  flex-direction: column;
+  align-items:    stretch;
+  padding:        0;
+  /* Reuse the .sheet-section visuals via the shared class above. */
+}
+.currency-section .section-header { /* same as other section headers */ }
+.currency-amount {
+  font-size:      2.2rem;
+  font-weight:    600;
+  text-align:     center;
+  padding:        0.6rem 0.5rem 0.4rem;
+  color:          var(--text);
+}
+.currency-quick-row {
+  display:        grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap:            0.3rem;
+  padding:        0 0.6rem;
+}
+.currency-quick-row .btn { padding: 0.35rem 0; font-size: 0.85rem; }
+.currency-custom-row {
+  display:        flex;
+  gap:            0.3rem;
+  padding:        0.4rem 0.6rem 0;
+}
+.currency-custom-row .hp-custom-input {
+  width: 100%;
+}
+.currency-custom-row .btn {
+  flex: 1;
+}
+.currency-section .currency-custom-row:last-child {
+  padding-bottom: 0.6rem;
+}
+@media (max-width: 720px) {
+  .currency-section { flex: 1 0 100%; }
+}
+
 .cards-loading,
 .cards-empty {
   font-size:  0.85rem;

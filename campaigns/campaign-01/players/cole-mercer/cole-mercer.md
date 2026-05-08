@@ -14,6 +14,7 @@ swaps_remaining: 0
 perk_5:
 perk_10:
 perk_17:
+currency: 0
 ---
 
 # Cole Mercer (Andrew)

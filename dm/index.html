@@ -240,6 +240,7 @@
           <button class="btn btn-sm btn-secondary" id="btn-auto-approve">Auto-Rest: OFF</button>
           <button class="btn btn-sm btn-loot" id="btn-group-loot">Group Loot</button>
           <button class="btn btn-sm btn-loot" id="btn-personal-loot">Personal Loot</button>
+          <button class="btn btn-sm btn-loot" id="btn-distribute-currency">Distribute Currency</button>
           <button class="btn btn-sm" id="btn-session-toggle">Start Session</button>
         </div>
         <div id="player-panel-body">
@@ -328,6 +329,34 @@
       <div class="loot-modal-footer">
         <button class="btn btn-secondary btn-sm" id="btn-loot-cancel">Cancel</button>
         <button class="btn btn-sm btn-loot" id="btn-give-loot" disabled>Give Loot</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ================================================
+       DISTRIBUTE CURRENCY MODAL
+       One row per player: name, current value, amount input,
+       Add/Remove buttons. Each click is immediate (writes to
+       Firebase straight away — no staging).
+       ================================================ -->
+  <div id="currency-modal" class="loot-modal-overlay" style="display:none" role="dialog" aria-modal="true" aria-label="Distribute Currency">
+    <div class="loot-modal-card">
+
+      <div class="loot-modal-header">
+        <span class="loot-modal-title">Distribute Currency</span>
+        <button class="modal-close" id="btn-currency-modal-close" aria-label="Close">&times;</button>
+      </div>
+
+      <p class="loot-observer-sub">
+        Type an amount and click Add or Remove for each player. Changes
+        apply instantly — no need to "send".
+      </p>
+
+      <div id="currency-rows" class="currency-rows"></div>
+
+      <div class="loot-modal-footer">
+        <button class="btn btn-sm" id="btn-currency-modal-done">Close</button>
       </div>
 
     </div>

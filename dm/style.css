@@ -1161,13 +1161,15 @@ html, body {
 }
 
 .player-card-hp,
-.player-card-slots {
+.player-card-slots,
+.player-card-currency {
   display:     flex;
   align-items: baseline;
   gap:         4px;
   font-size:   0.82rem;
   margin-bottom: 3px;
 }
+.player-currency-value { font-weight: 700; color: var(--text); }
 
 .player-hp-label {
   font-size:      0.65rem;
@@ -1857,6 +1859,40 @@ html, body {
 }
 
 .loot-staged-list { display: flex; flex-direction: column; gap: 5px; }
+
+/* Distribute Currency modal */
+.currency-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 0;
+}
+.currency-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+}
+.currency-row-name {
+  flex: 1;
+  color: var(--text);
+  font-weight: 600;
+}
+.currency-row-current {
+  color: var(--text-faint);
+  font-size: 0.8rem;
+  min-width: 80px;
+}
+.currency-row-input {
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 6px;
+  border-radius: 3px;
+  width: 80px;
+  font-size: 0.9rem;
+}
+.currency-row .btn-sm { padding: 4px 10px; }
 
 .loot-staged-row {
   display: flex;

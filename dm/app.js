@@ -71,6 +71,7 @@ const state = {
   playerFiles:      [],      // Subset of files where frontmatter.type === 'player'
   playerHpLive:        {},   // { [slug]: currentHp } — live from Firebase
   playerSlotsLive:     {},   // { [slug]: { spent, max } } — live spell slots from Firebase
+  playerCurrencyLive:  {},   // { [slug]: currency } — live from Firebase
   playerRestRequests:  {},   // { [slug]: { type, status, requestedAt } } — pending rests
   playerPendingLoot:   {},   // { [slug]: count } — pending personal loot the player still owes
   sessionActive:    false,   // Whether the DM has started the session
@@ -1175,6 +1176,19 @@ function renderPlayerPanel(files) {
           <span class="player-slots-max"  id="pslots-max-${escapeHtml(slug)}">${s.max}</span>
         </div>`;
       })()}
+      ${(() => {
+        // Currency row — read-only display. DM gives/takes currency via
+        // the Distribute Currency window, NOT by clicking values here.
+        // Falls back to the .md frontmatter value when Firebase hasn't
+        // pushed yet (e.g. DM panel rendered before session start).
+        const live = state.playerCurrencyLive[slug];
+        const fmCur = typeof fm.currency === 'number' ? fm.currency : 0;
+        const value = typeof live === 'number' ? live : fmCur;
+        return `<div class="player-card-currency" id="pcur-${escapeHtml(slug)}">
+          <span class="player-hp-label">Currency</span>
+          <span class="player-currency-value" id="pcur-value-${escapeHtml(slug)}">${escapeHtml(String(value))}</span>
+        </div>`;
+      })()}
       <div class="player-card-perks">
         ${makePerkRow('Lv5',  fm.perk_5  || '')}
         ${makePerkRow('Lv10', fm.perk_10 || '')}
@@ -1283,6 +1297,13 @@ function updatePlayerHpDisplay() {
     }
   }
 
+  // Currency live update — patch the value span directly so DM
+  // Distribute Currency writes show up without a full panel rebuild.
+  for (const [slug, currency] of Object.entries(state.playerCurrencyLive)) {
+    const el = document.getElementById(`pcur-value-${slug}`);
+    if (el) el.textContent = String(currency);
+  }
+
   // Show/hide approve buttons for pending rest requests + pending-loot badges
   for (const pf of state.playerFiles) {
     const slug    = pf.path.split('/players/')[1]?.split('/')[0] || '';
@@ -1357,6 +1378,7 @@ function subscribePlayerHp(campaignId) {
 
     state.playerHpLive       = {};
     state.playerSlotsLive    = {};
+    state.playerCurrencyLive = {};
     state.playerRestRequests = {};
     state.playerPendingLoot  = {};
     for (const [slug, playerData] of Object.entries(data.session || {})) {
@@ -1368,6 +1390,9 @@ function subscribePlayerHp(campaignId) {
           spent: playerData.spell_slots_spent || 0,
           max:   playerData.spell_slots_max,
         };
+      }
+      if (typeof playerData?.currency === 'number') {
+        state.playerCurrencyLive[slug] = playerData.currency;
       }
       if (playerData?.rest_request) {
         state.playerRestRequests[slug] = playerData.rest_request;
@@ -2462,9 +2487,9 @@ async function seedSessionInventoriesFromGitHub() {
       });
     }
 
-    // Build the player session payload from frontmatter. HP and
-    // spell_slots_spent persist across sessions (we don't reset them
-    // on session start); max values are derived from level + stats.
+    // Build the player session payload from frontmatter. HP, spell slot
+    // spend, and currency all persist across sessions (we don't reset
+    // them on session start); max values are derived from level + stats.
     const level = playerFm.level || 1;
     const sessionPayload = {
       name:              playerFm.name || slug,
@@ -2475,6 +2500,7 @@ async function seedSessionInventoriesFromGitHub() {
         ? playerFm.spell_slots_spent
         : 0,
       spell_slots_max:   calcMaxSpellSlots(playerFm.mind || 0, level),
+      currency:          typeof playerFm.currency === 'number' ? playerFm.currency : 0,
       inventory,
     };
 
@@ -2891,7 +2917,7 @@ async function savePlayerCardOrder(slug, orderedPaths) {
  *     finalised before window closes; any leftovers are stale)
  *
  * What's KEPT under each player slug:
- *   - name, hp_current, spell_slots_spent, spell_slots_max
+ *   - name, hp_current, spell_slots_spent, spell_slots_max, currency
  *
  * What's KEPT campaign-level:
  *   - session_active (the flag itself, so the player apps know we're off)
@@ -2917,6 +2943,7 @@ async function clearSessionInventories() {
         hp_current:        cur.hp_current        ?? null,
         spell_slots_spent: cur.spell_slots_spent ?? null,
         spell_slots_max:   cur.spell_slots_max   ?? null,
+        currency:          cur.currency          ?? null,
       };
     } catch (e) {
       console.warn(`Could not read session/${slug} before clear:`, e);
@@ -3018,6 +3045,59 @@ async function flushPendingPersonalLootToGitHub() {
   });
 
   await Promise.all(flushes);
+}
+
+/**
+ * On session end, write each player's current Firebase HP and currency
+ * back to their .md frontmatter. The player app debounces these writes
+ * during the session, but a session that ends before the debounce fires
+ * (or DM-side currency writes that never went through the player) would
+ * otherwise be lost. Cheap belt-and-braces sweep.
+ *
+ * Sequential — same reasoning as reconcile (avoid GitHub eventual-
+ * consistency cascade across rapid writes to sibling files in one folder).
+ * Skip-no-op via shared writeReconciledCardWithRetry-style logic
+ * (just compare values).
+ *
+ * Returns nothing; failures are best-effort console.warn.
+ */
+async function flushHpAndCurrencyToGitHub() {
+  if (!state.activeCampaign) return;
+
+  for (const pf of state.playerFiles) {
+    const slug = pf.path.split('/players/')[1]?.split('/')[0] || '';
+    if (!slug) continue;
+
+    try {
+      const sessionRef = ref(_db,
+        `${firebaseCampaignPath(state.activeCampaign.id)}/session/${slug}`);
+      const snap = await get(sessionRef);
+      const cur  = snap.val() || {};
+
+      const fbHp       = typeof cur.hp_current        === 'number' ? cur.hp_current        : null;
+      const fbSpent    = typeof cur.spell_slots_spent === 'number' ? cur.spell_slots_spent : null;
+      const fbCurrency = typeof cur.currency          === 'number' ? cur.currency          : null;
+
+      // Read player's current frontmatter; bail out if every value
+      // already matches (no-op).
+      const { content, sha } = await readFile(pf.path);
+      const fm = parseFrontmatter(content);
+      const fmHp       = typeof fm.hp_current        === 'number' ? fm.hp_current        : null;
+      const fmSpent    = typeof fm.spell_slots_spent === 'number' ? fm.spell_slots_spent : null;
+      const fmCurrency = typeof fm.currency          === 'number' ? fm.currency          : null;
+
+      let changed = false;
+      if (fbHp       !== null && fbHp       !== fmHp)       { fm.hp_current        = fbHp;       changed = true; }
+      if (fbSpent    !== null && fbSpent    !== fmSpent)    { fm.spell_slots_spent = fbSpent;    changed = true; }
+      if (fbCurrency !== null && fbCurrency !== fmCurrency) { fm.currency          = fbCurrency; changed = true; }
+      if (!changed) continue;
+
+      await writeFile(pf.path, serialiseFrontmatter(fm),
+        `Flush HP/currency for ${slug} on session end`, sha);
+    } catch (e) {
+      console.warn(`Failed to flush HP/currency for ${slug}:`, e);
+    }
+  }
 }
 
 /**
@@ -3192,6 +3272,149 @@ async function abandonLoot() {
 }
 
 // =====================================================
+// DISTRIBUTE CURRENCY
+// =====================================================
+
+/**
+ * Opens the Distribute Currency modal. Renders one row per player with
+ * their current currency, an amount input, and Add/Remove buttons.
+ *
+ * Each Add/Remove click writes directly to Firebase — no staging step.
+ * The player app's FB subscriber picks up the change and updates the
+ * sidebar currency display in real time. The DM session-end flush then
+ * persists FB → GitHub at end-of-session.
+ *
+ * Session-active gate: matches the other loot buttons. We don't allow
+ * currency writes when the session is off because the player app's FB
+ * subscriber is torn down then; the change wouldn't propagate.
+ */
+function openDistributeCurrency() {
+  if (!state.activeCampaign) return;
+  if (!state.sessionActive) {
+    alert('Start a session before distributing currency.');
+    return;
+  }
+  const modal = document.getElementById('currency-modal');
+  if (!modal) return;
+  renderCurrencyRows();
+  modal.style.display = '';
+}
+
+function closeDistributeCurrency() {
+  const modal = document.getElementById('currency-modal');
+  if (modal) modal.style.display = 'none';
+  // Clear any typed amounts so they don't carry over to next open.
+  const rows = document.getElementById('currency-rows');
+  if (rows) {
+    rows.querySelectorAll('input.currency-row-input').forEach(el => { el.value = ''; });
+  }
+}
+
+/**
+ * Renders the player rows inside the Distribute Currency modal. Pulls
+ * the live currency value per player from state.playerCurrencyLive
+ * (populated by the FB session subscriber in subscribePlayerHp).
+ */
+function renderCurrencyRows() {
+  const container = document.getElementById('currency-rows');
+  if (!container) return;
+  container.innerHTML = '';
+
+  for (const pf of state.playerFiles) {
+    const slug = pf.path.split('/players/')[1]?.split('/')[0] || '';
+    if (!slug) continue;
+    const fm   = pf.frontmatter || {};
+    const live = state.playerCurrencyLive[slug];
+    const cur  = typeof live === 'number'
+      ? live
+      : (typeof fm.currency === 'number' ? fm.currency : 0);
+
+    const row = document.createElement('div');
+    row.className = 'currency-row';
+    row.innerHTML = `
+      <span class="currency-row-name">${escapeHtml(fm.name || slug)}</span>
+      <span class="currency-row-current" id="cur-row-current-${escapeHtml(slug)}">(current: ${escapeHtml(String(cur))})</span>
+      <input type="number" class="currency-row-input" data-slug="${escapeHtml(slug)}" placeholder="Amount" min="1">
+      <button class="btn btn-sm" data-slug="${escapeHtml(slug)}" data-action="add">Add</button>
+      <button class="btn btn-sm btn-secondary" data-slug="${escapeHtml(slug)}" data-action="remove">Remove</button>
+    `;
+    container.appendChild(row);
+  }
+
+  // Wire button clicks via event delegation. Reading the input by row
+  // means each button only acts on its own row's amount.
+  container.querySelectorAll('button[data-action]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const slug   = btn.dataset.slug;
+      const action = btn.dataset.action;
+      const input  = container.querySelector(`input.currency-row-input[data-slug="${slug}"]`);
+      const raw    = input ? input.value.trim() : '';
+      const amt    = parseInt(raw, 10);
+      // Empty / non-numeric: clear and silent no-op (per user spec).
+      if (!Number.isFinite(amt) || amt <= 0) {
+        if (input) input.value = '';
+        return;
+      }
+      const delta = action === 'add' ? amt : -amt;
+      applyDmCurrencyDelta(slug, delta).then(() => {
+        if (input) input.value = '';
+        // Re-render the "(current: N)" label for this row from latest
+        // FB live value so the DM sees their change immediately.
+        const liveEl = document.getElementById(`cur-row-current-${slug}`);
+        const next   = state.playerCurrencyLive[slug];
+        if (liveEl && typeof next === 'number') {
+          liveEl.textContent = `(current: ${next})`;
+        }
+      });
+    });
+  });
+}
+
+/**
+ * Applies a currency delta to a player. Reads the player's current
+ * value from Firebase, validates the result is non-negative (alerts
+ * and bails if not), then writes back via update().
+ *
+ * Race-tolerant: we re-read inside this function rather than trusting
+ * the cached state.playerCurrencyLive, so if the player just changed
+ * their own currency at the same moment we see the latest value.
+ */
+async function applyDmCurrencyDelta(slug, delta) {
+  if (!state.activeCampaign) return;
+  const playerRef = ref(_db,
+    `${firebaseCampaignPath(state.activeCampaign.id)}/session/${slug}`);
+
+  let cur = 0;
+  try {
+    const snap = await get(playerRef);
+    const v = snap.val() || {};
+    cur = typeof v.currency === 'number' ? v.currency : 0;
+  } catch (e) {
+    alert('Could not read current currency: ' + (e.message || e));
+    return;
+  }
+
+  const next = cur + delta;
+  if (next < 0) {
+    alert(`That would put ${slug} below 0 (current: ${cur}).`);
+    return;
+  }
+
+  try {
+    await update(playerRef, { currency: next });
+  } catch (e) {
+    alert('Could not update currency: ' + (e.message || e));
+    return;
+  }
+
+  // Update local cache so the player panel reflects it without waiting
+  // for the FB onValue listener to fire (it will, but maybe a beat later).
+  state.playerCurrencyLive[slug] = next;
+  const panelEl = document.getElementById(`pcur-value-${slug}`);
+  if (panelEl) panelEl.textContent = String(next);
+}
+
+// =====================================================
 // MAIN INIT
 // =====================================================
 
@@ -3326,6 +3549,14 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-personal-loot').addEventListener('click',
     () => openLootModal('personal'));
 
+  // Distribute Currency — separate modal, separate flow.
+  const distCurBtn = document.getElementById('btn-distribute-currency');
+  if (distCurBtn) distCurBtn.addEventListener('click', openDistributeCurrency);
+  const curCloseBtn = document.getElementById('btn-currency-modal-close');
+  if (curCloseBtn) curCloseBtn.addEventListener('click', closeDistributeCurrency);
+  const curDoneBtn = document.getElementById('btn-currency-modal-done');
+  if (curDoneBtn) curDoneBtn.addEventListener('click', closeDistributeCurrency);
+
   // Loot modal: close / cancel
   document.getElementById('btn-loot-modal-close').addEventListener('click', closeLootModal);
   document.getElementById('btn-loot-cancel').addEventListener('click', closeLootModal);
@@ -3396,6 +3627,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const { failures, stats } = await reconcileSessionInventoriesToGitHub();
         btn.textContent = 'Saving pending loot…';
         await flushPendingPersonalLootToGitHub();
+        btn.textContent = 'Saving HP / currency…';
+        await flushHpAndCurrencyToGitHub();
         btn.textContent = 'Clearing Firebase…';
         await clearSessionInventories();
 

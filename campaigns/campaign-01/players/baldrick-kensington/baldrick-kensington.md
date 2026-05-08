@@ -16,6 +16,7 @@ perk_10: ""
 perk_17: ""
 hp_current: 29
 spell_slots_spent: 0
+currency: 0
 card_order:
   - campaigns/campaign-01/players/baldrick-kensington/cards/taunt.md
   - campaigns/campaign-01/players/baldrick-kensington/cards/combat-baton.md
