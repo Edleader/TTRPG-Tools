@@ -23,6 +23,9 @@ card_order:
   - campaigns/campaign-01/players/baldrick-kensington/cards/focussed-disarm.md
   - campaigns/campaign-01/players/baldrick-kensington/cards/leather-vest.md
   - campaigns/campaign-01/players/baldrick-kensington/cards/fever.md
+  - campaigns/campaign-01/cards/weapons/improvised-crossbow.md
+  - campaigns/campaign-01/cards/weapons/flare-gun.md
+  - campaigns/campaign-01/players/big-donny-t/cards/static-discharge.md
 ---
 
 # Baldrick "Ballsy" Kensington III (Ben)
