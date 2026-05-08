@@ -22,6 +22,13 @@ card_order:
   - campaigns/campaign-01/players/big-donny-t/cards/baseball-bat.md
   - campaigns/campaign-01/players/big-donny-t/cards/guard.md
   - campaigns/campaign-01/players/big-donny-t/cards/lighter-2.md
+pending_personal_loot:
+  - cardPath: campaigns/campaign-01/cards/abilities/shadow-step.md
+    name: Shadow Step
+    card_type: ability
+    slots: active
+    generation: 1
+    sentAt: 1778233549279
 ---
 
 # Big Donny T (Matt)
