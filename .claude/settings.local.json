@@ -11,7 +11,9 @@
       "Bash(Remove-Item \"C:\\\\Users\\\\edhay\\\\OneDrive\\\\Documents\\\\GitHub\\\\TTRPG Tools\\\\campaigns\\\\campaign-01\\\\arc1\\\\chapter1.dm.dm.md\" -ErrorAction SilentlyContinue)",
       "Bash(Write-Host \"Done\")",
       "Bash(git pull *)",
-      "Bash(git stash *)"
+      "Bash(git stash *)",
+      "Bash(git commit *)",
+      "Bash(git fetch *)"
     ]
   }
 }

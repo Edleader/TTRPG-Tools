@@ -113,7 +113,8 @@ Three factions are actively vying for control of the city. They are felt through
 | Voss's Test Subject | Arc 6 Boss | Unknown | Dr. Voss's primary test subject. Survived the research with extreme, unstable abilities. First major encounter with the full scope of what Voss's research produced. |
 | Mara Singh | Ally NPC | Active | Community centre organiser. Practical, tired, direct. Knew Brad pre-anomaly. |
 | Darren Pike | Ally NPC | Active | Mara's right-hand. Subservient. |
-| Charlotte | Gut punch payload | To be introduced | ~8-10 years old. Lost parents in the anomaly. Has been following the party. Draws spell scraps from nightmares. |
+| Charlotte | Gut punch payload (Arc 1) | Active | ~9 years old. Lost parents in the anomaly. Drew Lung Constriction from a dream. Carries a notebook full of symbols she sees in her sleep. The party's late-waking is her doing — she doesn't know it. **Dies Ch6.** |
+| Dave (The Broker) | Faction contact (Brokers) | Active | First Broker contact, introduced Ch3. Trades from a converted van. Friendly, well-informed, no moral floor. Pays in Marks. Reports everything back. |
 
 ---
 
