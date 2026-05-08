@@ -2,7 +2,7 @@
 name: Guard
 card_type: ability
 slots: active
-player_slot: hand
+player_slot: active
 generation: 1
 ---
 
