@@ -15,7 +15,7 @@ perk_5: ""
 perk_10: ""
 perk_17: ""
 hp_current: 28
-spell_slots_spent: 1
+spell_slots_spent: 0
 currency: 75
 card_order:
   - campaigns/campaign-01/players/big-donny-t/cards/guard.md
