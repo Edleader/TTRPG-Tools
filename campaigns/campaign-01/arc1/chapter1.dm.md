@@ -23,6 +23,7 @@
 - A helpful stranger pointed you toward the old community centre — *"They're organising people."*
 - Met **Mara Singh** (practical, tired, runs the place) and **Darren Pike** (Mara's right hand). About twenty residents inside, mostly elderly or hurt.
 - Mara gave you the supply run job — abandoned supermarket, food, possibly hostile occupants. The pay was shelter, food, and a place at the table.
+- Communities Centre 'enforcer' called **Resolute**.
 - Got to choose **starting weapons** from the centre's storeroom.
 - Mara also slid across a small stack of **scrap papers** covered in dense, strange symbols. She didn't know what they were. **Some of you took one look and just... understood it.** Like reading something in a language you didn't know you spoke. The ones you understood became your starting spells. The ones you didn't, you didn't.
 
