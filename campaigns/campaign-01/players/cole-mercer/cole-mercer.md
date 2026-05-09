@@ -30,7 +30,7 @@ card_order:
 
 ## Non-Card Items
 - Inflatable flamingo
-- Sheet
+- White armband
 - Belt
 
 ## Background
