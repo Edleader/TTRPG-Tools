@@ -32,6 +32,7 @@ card_order:
 - Inflatable flamingo
 - White armband
 - Belt
+- unidentified child drawing of runes
 
 ## Background
 - Field medic/paramedic before The Anomoly
