@@ -29,6 +29,6 @@ card_order:
 ## Non-Card Items
 
 ## Background
-- Yet to be defined
+- I’m a mute
 
 ## Notes
