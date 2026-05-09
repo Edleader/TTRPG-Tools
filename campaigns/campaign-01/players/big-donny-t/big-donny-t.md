@@ -35,3 +35,4 @@ card_order:
 - The blip in time comes as a relief, with presumably all financial and criminal records inaccessible, only heightening my lust for deception and skullduggery more knowing I cannot be caught.
 
 ## Notes
+White armband
