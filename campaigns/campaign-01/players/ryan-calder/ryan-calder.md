@@ -16,7 +16,7 @@ perk_10: ""
 perk_17: ""
 hp_current: 30
 spell_slots_spent: 0
-currency: 0
+currency: 1
 card_order:
   - campaigns/campaign-01/players/ryan-calder/cards/kitchen-knife.md
   - campaigns/campaign-01/players/ryan-calder/cards/motorcycle-helmet.md
