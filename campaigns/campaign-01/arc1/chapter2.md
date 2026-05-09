@@ -358,6 +358,141 @@ Whoever answers, she nods. Goes back to what she was doing.
 
 ---
 
+## Section 5 — The Afternoon
+
+> *"By the time you've handed off the petrol and washed up, the sun's already past the high point. The community centre smells like reheated soup and old wood. Outside the windows, the suburb is in the strange middle-of-the-day quiet that always comes between morning movement and whatever happens at dusk. You've got the rest of the day."*
+
+**GM note — how to use this section:** the afternoon is a **menu of options** for the players, not a scripted run. Present them one or two at a time as openings, not a list. Pick whatever feels right based on what the players are doing and how much session time you have.
+
+**If the session is running long:** skip straight to the **Montage Fallback** at the end of this section and read it as a wind-down.
+
+**If the session has time:** run any **two or three** of the small scenes below, then close with the chess game with Charlotte (centerpiece), then the dusk wind-down.
+
+**The mood overall:** quiet, domestic, a little melancholy. The players' first afternoon as actual residents of this place rather than visitors. Donny's player is sitting on what just happened in the underpass — give space for that to surface (or not) in any of the scenes below.
+
+---
+
+### Scene A — Helping Darren with the Generator
+
+**Setup:** Darren is fitting the petrol he just received into the generator's reserve drums. The generator itself sits in a small fenced enclosure out the back. He's not asking for help, but he won't refuse it.
+
+**What can happen:**
+- A practical scene. **Mind roll, difficulty −1**, to follow what he's doing. **Might roll, difficulty −1**, to help shift the heavier drums. Don't make these decisive — they're flavour.
+- Darren talks while he works. He's more open out here than inside. Possible things he mentions, *pick one or two*:
+  - He used to be a council electrician. Knows generators because he spent ten years maintaining them at sports grounds and community halls.
+  - He thinks the generator has another year or two in it before something critical wears out and he won't be able to source the part. He doesn't want to tell Mara.
+  - He mentions, almost in passing, that he saw "one of the new types" — *charged* — light up a wet rag from across a room. He won't say who. Says it like he saw a trick at a magic show, not horror.
+  - **(If Donny is the player helping):** Darren glances at him at one point and says: *"You all right, mate? You look like a man who's had a long morning."* He doesn't push. Just an opening.
+- This scene is a chance for **practical/quiet players** (Donny, Cole) to feel useful without combat.
+
+---
+
+### Scene B — Cooking / Distributing Lunch
+
+**Setup:** Mara is overseeing lunch service — a thin vegetable stew, rationed, served by hand. She'll take help from anyone who offers, or ask directly if the party isn't moving.
+
+**What can happen:**
+- The stew is simple and stretched. The community has perhaps 18-20 people through it across an hour. The party can ladle, hand out, sit and eat with residents.
+- **A few residents become small vignettes** — see Scene D below. This scene is the natural way to seed those conversations without making them feel scripted.
+- **A small moment for cooking-inclined players:** Cole's medic background means he knows what's in the soup is calorically thin. He could mention it to Mara. She'd nod and say *"I know. We're working on it."* She means: that's what the supply runs are for. She's not annoyed.
+- **Charlotte appears here too.** She doesn't queue. She waits until everyone else has been served, then takes the smallest bowl on her own. She doesn't sit with the residents. She sits near a wall.
+
+---
+
+### Scene C — Repairs and Reinforcement
+
+**Setup:** the community centre's front entrance was loosely barricaded in Ch1. It still is. Mara mentions, half to herself, that one of the boards covering a side window has come loose and she's been meaning to fix it.
+
+**What can happen:**
+- **A Might roll, difficulty −1**, to wedge the board back tight; another player can hold it while a second hammers it. Could be done with the salvaged tools from the storeroom. Trivially easy if the players engage.
+- The bigger value of this scene: **boarding up a window from inside** is a small physical reminder that this place is fragile and the players are the ones now keeping it standing. The threat from the morning (white armbands, painted wall) is in their heads while they hammer.
+- **Optional small upgrade:** if the party are creative — bring back something from the storeroom, repurpose chain or wire, suggest a better lock for the front door — Mara will accept it. Don't roll for it. **Just bank it as: 'the centre is slightly more defensible than it was this morning.'** This will matter in Ch4.
+- Big characters with no other obvious role this session (Baldrick, Tony) get something physical to do here.
+
+---
+
+### Scene D — Talking with Residents
+
+**Setup:** there are about 20 people living in the centre. The party know none of them by name yet. The afternoon is when that changes — slowly, one or two at a time. Have a couple of these in your back pocket; pull them out as the players drift around or ask "is anyone interesting here?"
+
+**Three named residents to hand out as needed:**
+
+**Pat (early 70s, white-haired, used to drive the local trams).**
+- Gruff, friendly, *"None of this would've happened on the trams."*
+- Has a battered AM/FM radio he's been trying to get to work. The chassis is intact, the speakers are fine, but every component he plugs into the circuit board is dead. He's been at it for weeks. He shows it to the party with the air of a man who knows this is hopeless and is doing it anyway.
+- **GM note:** the radio is a Thread E echo, not a payoff. Pat is not going to fix it. The point is the **act of trying** — and that he occasionally hears static or a fragment of voice from a radio that should be incapable of any sound at all. He'll mention this if asked, embarrassed. *"Probably my ears, eh."* Charlotte sometimes sits with him while he tinkers.
+
+**Iris (mid-60s, retired nurse, sharp-eyed).**
+- Will gravitate toward Cole the moment she works out he was a paramedic. Quietly, no fuss — *"You know what you're doing, then. Good. We've got an old man in the back I've been worrying about."* (This is the same old man Cole may meet in Ch3 at the clinic — *don't reveal that*. Ch3's clinic NPCs are different people. Iris is purely Ch2 colour.)
+- She is one of the most useful residents at the centre. Mara relies on her without saying so.
+- Asks the party what they actually do — what they were before the anomaly. Listens carefully. Doesn't volunteer that her own son hasn't woken up. Will only mention it if asked directly.
+
+**Theo (16, tall, has not spoken since the surge).**
+- Sits near the back wall. Reads when there are books to read. Helps with chores when asked but doesn't initiate.
+- Mara doesn't push him. *"He'll talk when he's ready."*
+- **Charlotte sometimes sits near him. They don't talk to each other.** That's the whole picture. Two quiet kids, parallel.
+
+**GM note:** none of these residents are critical to plot. They are **texture**. Use them to give the party someone to talk to in the afternoon and to make the centre feel like a real place worth defending in Ch4. If you don't get to any of them this session, no harm — they're standing by for Ch3, Ch4, Ch5.
+
+---
+
+### Scene E — The Chess Game (centerpiece — recommended late afternoon)
+
+**Setup:** late afternoon. The light is going amber through the front windows. Most of the residents have settled for the evening. Some of the party may be sitting around with nothing pressing to do.
+
+> *"Charlotte appears at your elbow without you noticing she'd moved. She's holding a battered cardboard box under one arm — the lid is taped on with old packing tape. She sets it on the table in front of you and looks at it, then at you, like she's working out whether to say what she came to say."*
+>
+> > *"I found it in the back cupboard."*
+>
+> *"She unwraps the tape carefully. Inside: a chess set. The board is fine, fold-out cardboard, only slightly water-damaged at one corner. Most of the pieces are wooden, original to the set. But about a third of them — including most of the pawns — are missing, and have been replaced with bottle caps. The bottle caps have small marks on them in pencil so you can tell which is which. Someone took the time."*
+>
+> > *"Do you know how to play?"*
+
+**How to run it:**
+- **Charlotte will play whoever volunteers.** Pick the player whose character would most plausibly humour her, or let the table decide.
+- Keep it **light and abstracted**. You don't need to actually play chess. Three or four exchanges of rolls is plenty:
+  - **Round 1 (Mind roll, difficulty 0):** opening moves. Whoever rolls higher *"is doing well in the early game."*
+  - **Round 2 (Mind roll, difficulty −1):** Charlotte does something a child shouldn't be able to do. The player notices.
+  - **Round 3 (Mind roll, difficulty −2):** mid-game. The player has to actually concentrate.
+  - **Round 4:** Charlotte wins, or the player wins by a margin smaller than they should have. **Don't let her dominate** — the point is the moment of *"how is she this good"*, not humiliation.
+- **What Charlotte does that doesn't fit:** she plays with **unusual focus and pattern recognition for a nine-year-old.** Doesn't gloat. Doesn't explain. If asked where she learned, she shrugs: *"I just see where things go."* Don't push it. **This is a tiny Thread C breadcrumb** — her brain works differently. The same "seeing where things go" is what lets her pull spell scraps from dreams. Players don't need to make this connection. If they do, good. If not, also good.
+- **The losing player can absolutely react.** Donny might bluster. Cole might quietly note it. Whatever they do, Charlotte just resets the pieces and asks if they want another go. **She is not competitive.** She is just enjoying having someone to play with.
+- **End the scene** when it feels finished — usually after one full game and the start of a second that they don't bother finishing because dinner's being put out. **Do not drag it.**
+
+**If a player is brusque or dismissive of her:** she puts the lid back on the box without saying anything, says *"Maybe later"*, and goes to her corner. **No one else volunteers if that happens.** The mood shifts. Don't punish the player — just let the silence land. It's not the wrong choice, it's a choice with weight.
+
+---
+
+### The Wind-Down
+
+> *"The sun goes orange, then red, then gone. Mara lights a few of the gas lanterns — the petrol-powered lights are saved for the rooms where they're needed. The centre settles into its evening rhythm: quieter conversation, the hush that always comes from people who've spent the day surviving and don't have a lot of words left."*
+>
+> *"Outside, the suburb is dark in a way it hasn't been since you were children. No streetlights. No glow on the horizon. Just the windows of the centre, and somewhere a few blocks over, the flicker of someone else's fire."*
+
+If the party haven't talked among themselves yet about what happened in the underpass — **this is when it surfaces**, if it's going to. Don't force it. If Donny's player wants to volunteer something, this is the moment. If he doesn't, the silence between them speaks for itself. Either is fine.
+
+> *"You're tired. Tomorrow's another day, and Mara's already mentioned, half to herself, that the medical situation is getting tight. That's tomorrow's problem."*
+
+**End of session.**
+
+---
+
+### Montage Fallback (use if session ran out of time)
+
+*Read aloud as a wind-down if you didn't get to run the scenes above.* Adjust to which players were most active in your session — call out specific characters where it lands.
+
+> *"The afternoon goes quiet. You've earned it. Darren works on the generator out the back; one of you helps him for an hour, holding tools, asking questions, not really getting answers. Inside, Mara puts together a thin vegetable stew and the centre eats — small bowls, big gratitude. People you didn't know yesterday now know your faces, and a few of them know your names."*
+>
+> *"You meet some of the residents. An old man called Pat who used to drive trams and is fixing a radio that won't ever work again. A retired nurse called Iris who watches Cole the moment he picks up a bandage. A teenage boy called Theo who doesn't say anything to anyone and sits quietly with the new girl, both of them not speaking, both of them somehow company for each other."*
+>
+> *"Late in the afternoon, Charlotte produces a battered chess set with bottle caps for half the pieces. She plays a few games with whoever volunteers. She wins more than she should. She doesn't gloat. She just resets the pieces and asks if you want to go again."*
+>
+> *"By the time the sun's gone you're tired in the way that people get when the day was real. Mara lights gas lanterns. The suburb outside is darker than any night you remember from before. The windows of the centre are warm. You sleep, and for the first time since you woke up in this version of the world, the place you're sleeping in feels like somewhere worth coming back to."*
+>
+> *"Tomorrow's another day."*
+
+---
+
 ## End of Chapter
 
 **What the players should feel:**
