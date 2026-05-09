@@ -16,7 +16,7 @@ perk_10: ""
 perk_17: ""
 hp_current: 32
 spell_slots_spent: 0
-currency: 10
+currency: 0
 card_order:
   - campaigns/campaign-01/players/baldrick-kensington/cards/hold-the-line.md
   - campaigns/campaign-01/players/baldrick-kensington/cards/lung-constriction.md
