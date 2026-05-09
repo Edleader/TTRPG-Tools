@@ -18,11 +18,11 @@ hp_current: 32
 spell_slots_spent: 0
 currency: 10
 card_order:
-  - campaigns/campaign-01/players/baldrick-kensington/cards/crowbar.md
   - campaigns/campaign-01/players/baldrick-kensington/cards/hold-the-line.md
   - campaigns/campaign-01/players/baldrick-kensington/cards/lung-constriction.md
-  - campaigns/campaign-01/players/baldrick-kensington/cards/sledgehammer.md
   - campaigns/campaign-01/players/baldrick-kensington/cards/static-discharge.md
+  - campaigns/campaign-01/players/baldrick-kensington/cards/crowbar.md
+  - campaigns/campaign-01/players/baldrick-kensington/cards/sledgehammer.md
 ---
 
 # Baldrick "Ballsy" Kensington III (Ben)
