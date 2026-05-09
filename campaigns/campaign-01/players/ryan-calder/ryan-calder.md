@@ -32,3 +32,4 @@ card_order:
 - I’m a mute
 
 ## Notes
+1x white armband
