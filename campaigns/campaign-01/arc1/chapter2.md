@@ -3,7 +3,7 @@ type: chapter
 arc: 1
 chapter: 2
 title: Charlotte / The Fuel Run
-status: in-progress
+status: ready-to-run
 players_level: 1
 combat:
   - label: The Purists (Just in case we need it)
