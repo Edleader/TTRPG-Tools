@@ -19,9 +19,9 @@ spell_slots_spent: 0
 currency: 0
 card_order:
   - campaigns/campaign-01/players/big-donny-t/cards/baseball-bat.md
-  - campaigns/campaign-01/players/big-donny-t/cards/lung-constriction.md
   - campaigns/campaign-01/players/big-donny-t/cards/static-discharge.md
   - campaigns/campaign-01/players/big-donny-t/cards/wrench.md
+  - campaigns/campaign-01/cards/spells/lung-constriction.md
 ---
 
 # Big Donny T (Matt)
