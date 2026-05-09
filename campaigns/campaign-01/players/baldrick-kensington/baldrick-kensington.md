@@ -15,7 +15,7 @@ perk_5: ""
 perk_10: ""
 perk_17: ""
 hp_current: 32
-spell_slots_spent: 1
+spell_slots_spent: 3
 currency: 10
 card_order:
   - campaigns/campaign-01/players/baldrick-kensington/cards/crowbar.md
