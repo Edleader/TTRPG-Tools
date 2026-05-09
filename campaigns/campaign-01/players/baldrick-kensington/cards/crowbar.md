@@ -10,7 +10,7 @@ value: 20
 name: Crowbar
 card_type: weapon
 slots: active
-player_slot: hand
+player_slot: active
 generation: 1
 ---
 
