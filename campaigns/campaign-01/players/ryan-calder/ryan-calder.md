@@ -14,7 +14,7 @@ swaps_remaining: 0
 perk_5: ""
 perk_10: ""
 perk_17: ""
-hp_current: 28
+hp_current: 30
 spell_slots_spent: 0
 currency: 1
 card_order:
