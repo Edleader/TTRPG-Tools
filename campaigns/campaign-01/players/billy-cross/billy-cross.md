@@ -26,7 +26,7 @@ card_order:
 
 # Billy "The Arrow" Cross (Davo)
 
-## Non-Card Items
+## Non-Card Items: One white arm band
 
 ## Background
 - *They say Billy got the name on a moonless night outside Greyford Pass. A warband had taken the road, helmets glinting in what little firelight there was, and the town guard dared not move in the dark. From somewhere beyond the treeline an arrow flew — straight through the slit of a captain’s helm. Then another, and another. By dawn the road was clear and no one had seen the archer, only the bodies and the arrows buried true. From that night on, folk called him “Billy Cross, the Unerring Arrow in the Dark”.*
