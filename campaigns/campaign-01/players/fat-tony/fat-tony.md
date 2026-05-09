@@ -18,10 +18,10 @@ hp_current: 26
 spell_slots_spent: 0
 currency: 0
 card_order:
-  - campaigns/campaign-01/players/fat-tony/cards/duct-tape.md
   - campaigns/campaign-01/players/fat-tony/cards/lumber-axe.md
-  - campaigns/campaign-01/players/fat-tony/cards/rope.md
   - campaigns/campaign-01/players/fat-tony/cards/slingshot.md
+  - campaigns/campaign-01/players/fat-tony/cards/duct-tape.md
+  - campaigns/campaign-01/players/fat-tony/cards/rope.md
 ---
 
 # Fat Tony (Tony)
