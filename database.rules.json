@@ -1,0 +1,17 @@
+{
+  "//": "Firebase Realtime Database security rules for ttrpg-livespace.",
+  "//_scope": "Only authenticated clients (Anonymous Auth is fine) may read or write. Access is confined to /campaigns/{campaignId}/... — nothing else in the database is exposed.",
+  "//_deploy": "Paste this file's contents into Firebase Console → Realtime Database → Rules, then Publish. (Or `firebase deploy --only database` if using the CLI.)",
+
+  "rules": {
+    ".read":  false,
+    ".write": false,
+
+    "campaigns": {
+      "$campaignId": {
+        ".read":  "auth != null",
+        ".write": "auth != null"
+      }
+    }
+  }
+}

@@ -48,9 +48,15 @@ import { initializeApp }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
 import { getDatabase, ref, onValue, set, remove, push, runTransaction, get, update }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+// Firebase security rules require every read/write to come from an authenticated
+// client. We use Anonymous Auth: no user-visible login, but every browser tab
+// gets a unique uid the rules can check for `auth != null`.
+import { getAuth, signInAnonymously }
+  from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 
 const _fbApp = initializeApp(FIREBASE_CONFIG);
 const _db    = getDatabase(_fbApp);
+const _fbAuth = getAuth(_fbApp);
 
 // No token needed here — auth is handled by the Cloudflare Worker proxy
 
@@ -3258,10 +3264,27 @@ async function applyDmCurrencyDelta(slug, delta) {
 // =====================================================
 
 /**
- * Entry point. Called on DOMContentLoaded.
+ * Entry point. Called on DOMContentLoaded (after Firebase Anonymous sign-in).
  * Fetches the list of campaigns from GitHub and shows the selection screen.
  */
 async function init() {
+  showLoadingScreen('Signing in…');
+
+  // Sign in anonymously so Firebase security rules (which require auth != null)
+  // will accept our reads/writes. This is invisible to the user — no credentials
+  // needed. If it fails we can't talk to Firebase at all, so surface the error
+  // instead of silently limping on.
+  try {
+    await signInAnonymously(_fbAuth);
+  } catch (e) {
+    document.getElementById('loading-screen').style.display = 'none';
+    document.getElementById('error-screen').style.display  = '';
+    document.getElementById('error-message').textContent   =
+      'Could not sign in to Firebase: ' + e.message +
+      '\n\nMake sure Anonymous sign-in is enabled in Firebase Console → Authentication → Sign-in method.';
+    return;
+  }
+
   showLoadingScreen('Connecting to GitHub…');
 
   try {

@@ -41,6 +41,11 @@ import { renderMarkdown }    from '../shared/markdown.js';
 import { initializeApp }      from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
 import { getDatabase, ref, onValue, set, get, update, runTransaction, remove, push }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+// Firebase security rules require every read/write to come from an authenticated
+// client. We use Anonymous Auth: no user-visible login, but every browser tab
+// gets a unique uid the rules can check for `auth != null`.
+import { getAuth, signInAnonymously }
+  from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 
 // =====================================================
 // FIREBASE INIT
@@ -48,6 +53,7 @@ import { getDatabase, ref, onValue, set, get, update, runTransaction, remove, pu
 
 const firebaseApp = initializeApp(FIREBASE_CONFIG);
 const db          = getDatabase(firebaseApp);
+const fbAuth      = getAuth(firebaseApp);
 
 // =====================================================
 // STATE
@@ -230,6 +236,21 @@ function showError(msg) {
 
 async function startLogin() {
   showScreen('loading-screen');
+
+  // Sign in anonymously so Firebase security rules (which require auth != null)
+  // will accept our reads/writes. This is invisible to the player — no
+  // credentials required. Failing here means Firebase is unreachable, so
+  // surface it rather than let live-sync silently break later.
+  try {
+    await signInAnonymously(fbAuth);
+  } catch (e) {
+    showError(
+      'Could not sign in to Firebase: ' + e.message +
+      '\n\nAsk your GM to check that Anonymous sign-in is enabled in Firebase.'
+    );
+    return;
+  }
+
   try {
     state.campaigns = await listCampaigns();
   } catch (e) {
