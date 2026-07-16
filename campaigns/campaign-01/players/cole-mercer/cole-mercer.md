@@ -24,7 +24,7 @@ card_order:
   - campaigns/campaign-01/players/cole-mercer/cards/field-medkit-2.md
   - campaigns/campaign-01/players/cole-mercer/cards/field-medkit.md
   - campaigns/campaign-01/players/cole-mercer/cards/tarp.md
-  - campaigns/campaign-01/players/big-donny-t/cards/lung-constriction.md
+  - campaigns/campaign-01/players/cole-mercer/cards/lung-constriction.md
 ---
 
 # Cole Mercer (Andrew)
