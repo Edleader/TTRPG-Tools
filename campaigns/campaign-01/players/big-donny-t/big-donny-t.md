@@ -21,7 +21,7 @@ card_order:
   - campaigns/campaign-01/players/big-donny-t/cards/baseball-bat.md
   - campaigns/campaign-01/players/big-donny-t/cards/static-discharge.md
   - campaigns/campaign-01/players/big-donny-t/cards/wrench.md
-  - campaigns/campaign-01/cards/spells/lung-constriction.md
+  - campaigns/campaign-01/players/big-donny-t/cards/lung-constriction-2.md
 ---
 
 # Big Donny T (Matt)
