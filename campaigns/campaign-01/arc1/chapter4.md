@@ -3,8 +3,39 @@ type: chapter
 arc: 1
 chapter: 4
 title: Something Worth Protecting
-status: in-progress
+status: ready-to-run
 players_level: 2
+combat:
+  - label: The Watchers (only if scouting turns to a fight)
+    enemies:
+      - name: Purist Watcher
+        hp: 18
+        count: 3
+        attack: 2+d4 (steel pipe, Simple -1)
+        roll: 12
+        notes: Might 12. Came prepared. Fight to push the party back toward the centre, not to kill. Disengage if two of them go down. Call for backup after round 1 — add the reinforcements at the start of round 2.
+  - label: Watcher reinforcements (start of round 2)
+    enemies:
+      - name: Purist Watcher (reinforcement)
+        hp: 18
+        count: 2
+        attack: 2+d4 (steel pipe, Simple -1)
+        roll: 12
+        notes: Arrive from the end of the street at the start of round 2. Same behaviour — push, don't kill; disengage once two of the whole group are down.
+  - label: The Front (the threat arrives)
+    enemies:
+      - name: Purist Member
+        hp: 18
+        count: 5
+        attack: 2+d4 (baseball bat / pipe, Simple -1)
+        roll: 12
+        notes: Might 12. Organised, not thugs. Moving on the centre.
+      - name: Purist Leader
+        hp: 28
+        count: 1
+        attack: 2+d6 (steel pipe, Simple -1)
+        roll: 14
+        notes: Might 14. Leather Vest — DR 2. Focussed Disarm (Primary Action, Might roll diff -5 vs target within 2m; on hit target's weapon is knocked away, must spend next Primary Action to retrieve it or fight unarmed). Targets spell-users / the most powerful-looking party member first.
 ---
 
 # Arc 1, Chapter 4 — Something Worth Protecting
