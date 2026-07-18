@@ -31,4 +31,5 @@ card_order:
 ## Background
 - Yet to define
 
-## Noteswhite arm band
+## Notes
+- White arm band
