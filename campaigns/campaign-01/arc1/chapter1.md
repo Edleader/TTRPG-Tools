@@ -31,8 +31,6 @@ combat:
 
 # Arc 1, Chapter 1 — The Supply Run
 
-## Status: COMPLETE (Session played)
-
 ## Overview
 Wake up. Explore the neighbourhood. Find the community centre. Accept the supply mission. Choose starting gear. Travel to the supermarket. Deal with scavengers. Loot the building. Fight a gang on the way back. Return home.
 

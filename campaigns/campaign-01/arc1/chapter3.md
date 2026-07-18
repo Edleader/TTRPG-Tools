@@ -38,8 +38,6 @@ combat:
 
 # Arc 1, Chapter 3 — The Broker / Wider World
 
-## Status: READY TO RUN
-
 ## Overview
 The morning after Chapter 2. The world gets bigger. Mara has a concrete medical run for the party — supplies for someone running a fever — and a vague map of where to look. While they're out, they encounter their first **Broker** and learn about **Marks**, witness the early shape of something watching them, find a fragment that doesn't quite fit, and run into two very different problems on the way out and the way home. The session ends with the day's haul delivered and one or two new threads opened.
 

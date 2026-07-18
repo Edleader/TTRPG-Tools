@@ -9,8 +9,6 @@ players_level: 2
 
 # Arc 1, Chapter 4 — Something Worth Protecting
 
-## Status: READY TO RUN
-
 ## Overview
 The morning after Chapter 3. The community centre faces a direct threat and has to be defended. Charlotte witnesses a party member use a spell. She tries to use the Lung Constriction scrap she has been keeping — it backfires. This is the chapter where the players stop thinking of the community centre as somewhere they are staying and start thinking of it as theirs. Brad's name surfaces for the first time.
 

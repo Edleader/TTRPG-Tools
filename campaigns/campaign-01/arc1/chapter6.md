@@ -9,8 +9,6 @@ players_level: 3
 
 # Arc 1, Chapter 6 — The Siege / Charlotte
 
-## Status: READY TO RUN
-
 ## Overview
 The Purists have identified the community centre as a focal point for charged people. They believe Charlotte — the child who has been present since the party arrived — is the source of their powers, or at minimum a conduit for them. They have encircled the building. This chapter runs two things simultaneously: a siege outside, and Charlotte dying inside. The party cannot fully attend to either without neglecting the other. Charlotte's last words prove the Purists wrong. Then the party fights.
 

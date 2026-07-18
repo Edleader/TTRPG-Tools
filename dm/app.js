@@ -1799,12 +1799,13 @@ async function loadCampaign(campaign) {
  * Normalises a status string from frontmatter into a CSS class name.
  *
  * @param {string} raw
- * @returns {string} 'complete' | 'in-progress' | 'stub'
+ * @returns {string} 'complete' | 'ready' | 'in-progress' | 'stub'
  */
 function normaliseStatus(raw) {
   if (!raw) return 'stub';
   const s = raw.toLowerCase();
-  if (s === 'complete' || s === 'done')                        return 'complete';
+  if (s === 'complete' || s === 'done')                          return 'complete';
+  if (s === 'ready-to-run' || s === 'ready to run' || s === 'ready') return 'ready';
   if (s === 'in-progress' || s === 'in progress' || s === 'wip') return 'in-progress';
   return 'stub';
 }

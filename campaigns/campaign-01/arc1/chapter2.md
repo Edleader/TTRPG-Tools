@@ -46,8 +46,6 @@ combat:
 
 # Arc 1, Chapter 2 — Charlotte / The Fuel Run
 
-## Status: READY TO RUN
-
 ## Overview
 Two things happen this chapter. Charlotte arrives. The party goes out for fuel. These are not equally important. The fuel run is the job. Charlotte is the chapter.
 

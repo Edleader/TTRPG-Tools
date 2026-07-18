@@ -22,6 +22,7 @@
   --border-light: #3a3a3a;
 
   --status-complete:   #4caf50;
+  --status-ready:      #2196f3;
   --status-inprogress: #ff9800;
   --status-stub:       #666;
 
@@ -501,6 +502,7 @@ html, body {
 }
 
 .status-dot.complete   { background: var(--status-complete); }
+.status-dot.ready      { background: var(--status-ready); }
 .status-dot.in-progress { background: var(--status-inprogress); }
 .status-dot.stub       { background: var(--status-stub); }
 

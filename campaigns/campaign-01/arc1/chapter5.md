@@ -9,8 +9,6 @@ players_level: 3
 
 # Arc 1, Chapter 5 — Further Out
 
-## Status: READY TO RUN
-
 ## Overview
 The morning after Chapter 4. The party range further than they have before — out past the surrounding streets and into the wider district. They find the electric car. They get a proper look at The Renewed's territory and feel its discomfort. They find a fragment that doesn't make sense yet. When they return, the Purist presence around the community centre has tightened.
 
