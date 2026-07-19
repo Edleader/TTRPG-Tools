@@ -42,8 +42,8 @@ card_order:
 ## Background
 
 - Aim: party healer who can handle range weapons decently but pretty squishy physically. Heavy focus on healing with range attacks only when party is safe or full health.
-
 Age: 34 | Background: Army Combat Medic, 3 tours, attached to a recon extraction unit
+
 
 **Backstory Bullets:**
 Enlisted at 19; discovered a gift for staying calm under fire, fast-tracked into combat medicine
@@ -51,11 +51,13 @@ Pulled 12 men out of active kill zones; lost 4 — their names tattooed on his f
 No living family — parents died in a car accident during his 2nd tour, couldn't get leave for the funeral
 Unit disbanded when the collapse hit; the military was the only family he had left
 
+
 **The Girlfriend — Elena:**
 Civilian trauma nurse, met on deployment; sharp, blunt, unimpressed by rank — first person to challenge him instead of defer to him
 Together 3 years; was carrying a ring, planning to propose, never got the chance
 Was traveling to see her sister when the collapse hit — comms went dark
 Last contact: a garbled radio transmission mentioning a "safe zone" and a half-heard location — he's been chasing that lead ever since
+
 
 **Fun DM Hooks:**
 The Ring — he never got to propose; still carries it. Bribery item, theft target, or trauma trigger if lost/found
@@ -64,4 +66,5 @@ False Sightings — rumors of a nurse matching her description surface in settle
 The Debt — one of the 4 he lost had a brother who survived and blames Cole; could appear as hostile NPC or reluctant ally
 Reputation — "the Doc" is known in survivor networks; could get him recruited, ransomed, or hunted for his skills
 Quirk — hums a specific tune while treating patients; its absence (silence, dead radio) can signal something's wrong
+
 ## Notes
