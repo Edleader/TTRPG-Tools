@@ -37,6 +37,7 @@ card_order:
 - From drug store: Broad spectrum Antibiotics
 - From drug store: Painkillers strong
 - From drug store: Epi pen / epinephrine
+- From drug store: Boner Pills
 
 ## Background
 - Field medic/paramedic before The Anomoly
