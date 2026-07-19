@@ -15,7 +15,7 @@ perk_5: ""
 perk_10: ""
 perk_17: ""
 hp_current: 28
-spell_slots_spent: 2
+spell_slots_spent: 3
 currency: 0
 card_order:
   - campaigns/campaign-01/players/baldrick-kensington/cards/hold-the-line.md
