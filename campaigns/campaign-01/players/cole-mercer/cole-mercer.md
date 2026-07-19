@@ -31,7 +31,7 @@ card_order:
 
 ## Non-Card Items
 - Inflatable flamingo
-- White armband
+- White armband (real one now from session 3)
 - Belt
 - Unidentified child drawing of runes
 - From drug store: Broad spectrum Antibiotics
