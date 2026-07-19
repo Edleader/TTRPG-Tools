@@ -15,7 +15,7 @@ perk_5: ""
 perk_10: ""
 perk_17: ""
 currency: 10
-hp_current: 13
+hp_current: 9
 spell_slots_spent: 0
 card_order:
   - campaigns/campaign-01/players/cole-mercer/cards/cauterise.md
