@@ -9,6 +9,8 @@ cloudflare-worker.js
 github pat.txt
 CONTEXT.txt
 TESTS.txt
+Character Leveling Table.jpg
+level-up-plan.md
 
 # Ignore screenshot files dropped at the repo root
 *.jpg

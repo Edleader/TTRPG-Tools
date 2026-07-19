@@ -218,7 +218,34 @@ Cards or perks may allow players to adopt states that make attacks against them 
 
 Characters progress from Level 1 to Level 20, gaining stat points, active slots, hand slots, and perks.
 
-*(See character levelling table — to be added)*
+Each level grants some combination of the four rewards below. The **Gained** columns show what you receive *on reaching that level*; the **Total** columns show the running total available at that level (starting from the Level 1 baseline of 36 stat points, 4 active slots, 4 hand slots).
+
+**Table 1 — Character Levelling Table**
+
+| Level | Stat Points Gained | Active Slot Gained | Hand Size Gained | Perk Gained | Total Stat Points | Total Active Slots | Total Hand Size |
+|:-----:|:------------------:|:------------------:|:----------------:|:-----------:|:-----------------:|:------------------:|:---------------:|
+| 1  | 36 | 4 | 4 | — | 36 | 4 | 4 |
+| 2  | —  | 1 | — | — | 36 | 5 | 4 |
+| 3  | 1  | — | — | — | 37 | 5 | 4 |
+| 4  | —  | — | 1 | — | 37 | 5 | 5 |
+| 5  | —  | — | — | ✓ | 37 | 5 | 5 |
+| 6  | 1  | — | — | — | 38 | 5 | 5 |
+| 7  | —  | 1 | — | — | 38 | 6 | 5 |
+| 8  | —  | — | 1 | — | 38 | 6 | 6 |
+| 9  | 1  | — | — | — | 39 | 6 | 6 |
+| 10 | —  | — | — | ✓ | 39 | 6 | 6 |
+| 11 | —  | 1 | — | — | 39 | 7 | 6 |
+| 12 | 1  | — | — | — | 40 | 7 | 6 |
+| 13 | —  | — | 1 | — | 40 | 7 | 7 |
+| 14 | —  | 1 | — | — | 40 | 8 | 7 |
+| 15 | 1  | — | — | — | 41 | 8 | 7 |
+| 16 | —  | — | 1 | — | 41 | 8 | 8 |
+| 17 | —  | — | — | ✓ | 41 | 8 | 8 |
+| 18 | 1  | — | — | — | 42 | 8 | 8 |
+| 19 | —  | 1 | — | — | 42 | 9 | 8 |
+| 20 | —  | — | 1 | — | 42 | 9 | 9 |
+
+**Perks are gained at Levels 5, 10, and 17** — see the Perks section below for the choices available at each. Every character ends Level 20 with **42 stat points, 9 active slots, and 9 hand slots.**
 
 Active slots and hand size max out at 9 (unless a card modifies this). Stats max at 20 from points alone (cards may push beyond).
 
