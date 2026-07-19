@@ -36,3 +36,4 @@ card_order:
 
 ## Notes
 White armband
+Purist Nazi Notebook
