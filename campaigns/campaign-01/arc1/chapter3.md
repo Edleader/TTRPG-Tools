@@ -25,9 +25,9 @@ combat:
       - name: Opportunist (lead)
         hp: 18
         count: 1
-        attack: 2+d4 (steel pipe)
-        roll: 12
-        notes: Might 12, Finesse 11. Doing the talking. Will retreat if any of the others go down hard.
+        attack: 1+d6 (balanced short blade, Finesse)
+        roll: 14
+        notes: Might 12, Finesse 15 — skilled with the blade, hits on 14 or under. The dangerous one; a real threat despite the group's desperation. Doing the talking. Will retreat if any of the others go down hard. LOOT — this is the Balanced Short Blade for the party to pick up; a Finesse 15+ wielder gets it at Simple (-1). Only Fat Tony currently qualifies.
       - name: Opportunist (knife)
         hp: 15
         count: 2
@@ -347,7 +347,9 @@ The walk back is heavier — saline bags are real weight, plus everything from t
 >
 > *"They are **not** the white-armband people. They are not organised. They are wearing what they were wearing two years ago when the anomaly hit, faded and stretched and patched. They look hungry. One of them is sweating in a way the morning doesn't account for."*
 
-**The lead one — older, mid-30s, holding a length of steel pipe — speaks:**
+**The lead one — older, mid-30s — speaks. He's holding a blade that doesn't fit the rest of him:** a short, clean, beautifully balanced knife, the kind of thing that was expensive once. Everything else about these three is patched and worn and scavenged; the blade is the exception. And unlike the other two, he *knows how to hold it* — it sits in his grip easy and ready, turning a slow idle circle as he talks. Whoever he was before, he can use it. It catches the morning light.
+
+> *(GM: draw the eye to the blade deliberately — it is the one thing on any of them worth having, and the party should clock that. He is the dangerous one precisely because he can wield it; watching him land a clean hit with it is what makes the party want it. It is the reward for this encounter.)*
 
 > *"You picked up a lot of stuff. We've been watching that chemist for a week — couldn't get past the dog bloke. You did. Fair play. Now we need some of what you've got."*
 
@@ -370,8 +372,8 @@ He's trying to sound casual. He isn't. His eyes keep flicking back to the sweati
 **Stat block (if it goes to a fight):**
 
 **The Opportunists (3):**
-- All have **15-18 HP, Might 11-12, Finesse 11-12.** Roll under 12 to hit.
-- **Lead one — steel pipe:** 2+d4 damage, melee, reach 1m. **Will retreat if reduced below half HP.**
+- The two knife-wielders have **15-18 HP, Might 11-12, Finesse 11-12.** Roll under 12 to hit.
+- **Lead one — balanced short blade:** 1+d6 damage, melee. **Finesse 15 — rolls under 14 to hit. He is skilled with it and genuinely dangerous;** the party will feel the difference between him and the other two. **Will retreat if reduced below half HP.** *The blade is the loot the party wants — and watching him use it well is the reason they want it. See "The blade" note below.*
 - **Knife (×1):** 1+d4 damage, melee.
 - **Knife (sick one):** 1+d4 damage, melee. **Has disadvantage on attack rolls** — hands shaking. Sweating. Fights badly. **15 HP, gives up the moment he's hit.**
 
@@ -380,6 +382,12 @@ He's trying to sound casual. He isn't. His eyes keep flicking back to the sweati
 - **If the party shared:** the three retreat with the dressings/antibiotics they were given and disappear up a side street. **They may surface again** — bankable as future allies or future complication.
 - **If the party fought and won:** bodies. The party are now visibly carrying medical supplies they took violently. **No one in the centre needs to know.**
 - **If the party let one or more flee:** the survivors carry the story of what the party did. Word travels in this kind of suburb. **The party's reputation is now slightly more concrete — fair, generous, brutal, dangerous, depending on what happened.** Bank it.
+
+**The blade (loot):** whether the party fight, intimidate, or negotiate, make the **Balanced Short Blade** available to them.
+- **If they fought:** it's on the lead one — dropped, or prised from his hand. Obvious.
+- **If they intimidated:** as the three back off, a clever party member can demand the blade as the price of letting them go. The lead one hesitates, then tosses it at their feet — it clearly wasn't his to begin with.
+- **If they negotiated / shared supplies:** the lead one offers the blade in return, almost embarrassed. *"Here. Take this. It's not… it was never really ours."* A quiet admission that they took it off someone too.
+- **Mechanically:** it's a fine Finesse blade — Simple (−1), 1+d6, one hand — but it only rewards a **Finesse 15+** wielder with the reduced difficulty. Right now that's **only Fat Tony.** Hand it out via the DM card-give tool. If Tony isn't present this session, the party can still carry it back for him.
 
 **GM note:** this fight is **deliberately the inverse** of the Hollow Man encounter. The Hollow Man was unhinged and pitiable; the Opportunists are sane and pitiable. **Different shapes of broken.** The party should leave today aware that the world is full of people doing terrible things for reasons that almost make sense.
 
