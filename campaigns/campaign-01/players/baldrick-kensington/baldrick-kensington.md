@@ -33,3 +33,4 @@ card_order:
 - Yet to be defined
 
 ## Notes
+Gained “Gandalf” friend dog
