@@ -26,6 +26,7 @@ Cards are grouped by Generation (roughly every 4 levels). Generation 1 covers le
 | Combat Baton | Finesse | 1H | Standard (−2) | 2m | 1+d6 | 35 | Extendable; designed for speed |
 | Hatchet | Might | 1H | Standard (−2) | 2m | 2+d4 | 30 | Compact; carries everywhere |
 | Short Blade | Finesse | 1H | Standard (−2) | 2m | 1+d6 | 40 | Military surplus or salvaged |
+| Balanced Short Blade | Finesse | 1H | Simple (−1) | 2m | 1+d6 | 40 | **Requires Finesse 15+.** Superbly balanced; easier to land in a skilled hand |
 | Revolver | Finesse | 1H | Simple (−1) | 20m | 2+d4 | 40 | Reliable. Six chambers |
 | Slingshot | Finesse | 1H | Simple (−1) | 15m | 1+d4 | 15 | Silent; unlimited ammunition |
 | Flare Gun | Might | 1H | Standard (−2) | 10m | 2+d4 | 30 | Technically a signalling device |
