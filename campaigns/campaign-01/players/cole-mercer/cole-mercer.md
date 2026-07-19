@@ -47,7 +47,7 @@ Age: 34 | Background: Army Combat Medic, 3 tours, attached to a recon extraction
 
 **Backstory Bullets:**
 Enlisted at 19; discovered a gift for staying calm under fire, fast-tracked into combat medicine
-Pulled 12 men out of active kill zones; lost 4 — their names tattooed on his forearm as a reminder
+Pulled 12 men out of active kill zones; lost 4 — their names tattooed on his forearm as a reminder: 'Jeff, Geoff, Jeph and Geoffrey' 
 No living family — parents died in a car accident during his 2nd tour, couldn't get leave for the funeral
 Unit disbanded when the collapse hit; the military was the only family he had left
 
