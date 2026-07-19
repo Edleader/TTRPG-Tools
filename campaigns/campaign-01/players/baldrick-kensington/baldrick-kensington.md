@@ -28,6 +28,7 @@ card_order:
 # Baldrick "Ballsy" Kensington III (Ben)
 
 ## Non-Card Items
+White armband
 
 ## Background
 - Yet to be defined
