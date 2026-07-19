@@ -56,7 +56,7 @@ Unit disbanded when the collapse hit; the military was the only family he had le
 Civilian trauma nurse, met on deployment; sharp, blunt, unimpressed by rank — first person to challenge him instead of defer to him
 Together 3 years; was carrying a ring, planning to propose, never got the chance
 Was traveling to see her sister when the collapse hit — comms went dark
-Last contact: a garbled radio transmission mentioning a "safe zone" and a half-heard location — he's been chasing that lead ever since
+Last contact: Before the Anomaly, no word of her since.
 
 
 **Fun DM Hooks:**
