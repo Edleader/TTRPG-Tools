@@ -34,6 +34,9 @@ card_order:
 - White armband
 - Belt
 - unidentified child drawing of runes
+- From drug store: Broad spectrum Antibiotics
+- From drug store: Painkillers strong
+- From drug store: Epi pen / epinephrine
 
 ## Background
 - Field medic/paramedic before The Anomoly
